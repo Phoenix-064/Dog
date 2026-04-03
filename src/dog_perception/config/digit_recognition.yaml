@@ -1,0 +1,13 @@
+dog_perception:
+  ros__parameters:
+    digit_result_topic: "/target/digit_result"
+    digit_recognizer_type: "heuristic"
+    digit_roi_x: 0
+    digit_roi_y: 0
+    digit_roi_width: 64
+    digit_roi_height: 64
+    digit_min_confidence: 0.30
+    digit_glare_brightness_threshold: 245.0
+    digit_glare_ratio_threshold: 0.35
+    digit_temporal_window: 5
+    digit_temporal_confirm_count: 2

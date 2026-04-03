@@ -81,6 +81,19 @@ std::string_view reliabilityToString(const rclcpp::ReliabilityPolicy reliability
   return reliability == rclcpp::ReliabilityPolicy::BestEffort ? "best_effort" : "reliable";
 }
 
+double percentile95(const boost::circular_buffer<double> & samples)
+{
+  if (samples.empty()) {
+    return 0.0;
+  }
+
+  std::vector<double> sorted(samples.begin(), samples.end());
+  std::sort(sorted.begin(), sorted.end());
+  const auto index = static_cast<size_t>(
+    std::ceil(static_cast<double>(sorted.size()) * 0.95) - 1.0);
+  return sorted[std::min(index, sorted.size() - 1)];
+}
+
 }  // namespace
 
 std::string PerceptionNode::getDefaultExtrinsicsYamlPath()
@@ -145,6 +158,15 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , stale_frame_timeout_ms_(50)
 , max_future_skew_ms_(5)
 , frame_cache_size_(8)
+, digit_roi_x_(0)
+, digit_roi_y_(0)
+, digit_roi_width_(64)
+, digit_roi_height_(64)
+, digit_min_confidence_(0.30)
+, digit_glare_brightness_threshold_(245.0)
+, digit_glare_ratio_threshold_(0.35)
+, digit_temporal_window_(5)
+, digit_temporal_confirm_count_(2)
 , qos_compatible_(true)
 , dropped_frame_count_(0)
 , solved_frame_count_(0)
@@ -152,13 +174,17 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , frame_history_(8)
 , latency_samples_ms_(8)
 , end_to_end_latency_samples_ms_(8)
+, digit_label_history_(5)
+, digit_latency_samples_ms_(8)
 {
   constexpr int kMaxSyncQueueSize = 1024;
   constexpr int kMaxFrameCacheSize = 4096;
+  constexpr int kMaxTemporalWindow = 120;
 
   image_topic_ = declare_parameter<std::string>("image_topic", "/camera/image_raw");
   pointcloud_topic_ = declare_parameter<std::string>("pointcloud_topic", "/livox/lidar");
   target3d_topic_ = declare_parameter<std::string>("target3d_topic", "/target/target_3d");
+  digit_result_topic_ = declare_parameter<std::string>("digit_result_topic", "/target/digit_result");
   sync_queue_size_ = declare_parameter<int>("sync_queue_size", 10);
   sync_slop_ms_ = declare_parameter<int>("sync_slop_ms", 25);
   stale_frame_timeout_ms_ = declare_parameter<int>("stale_frame_timeout_ms", 50);
@@ -166,37 +192,75 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   frame_cache_size_ = declare_parameter<int>("frame_cache_size", 32);
   qos_reliability_ = declare_parameter<std::string>("qos_reliability", "best_effort");
   solver_type_ = declare_parameter<std::string>("solver_type", "minimal_pnp");
+  digit_recognizer_type_ = declare_parameter<std::string>("digit_recognizer_type", "heuristic");
   extrinsics_yaml_path_ =
     declare_parameter<std::string>("extrinsics_yaml_path", getDefaultExtrinsicsYamlPath());
+  digit_roi_x_ = declare_parameter<int>("digit_roi_x", 0);
+  digit_roi_y_ = declare_parameter<int>("digit_roi_y", 0);
+  digit_roi_width_ = declare_parameter<int>("digit_roi_width", 64);
+  digit_roi_height_ = declare_parameter<int>("digit_roi_height", 64);
+  digit_min_confidence_ = declare_parameter<double>("digit_min_confidence", 0.30);
+  digit_glare_brightness_threshold_ =
+    declare_parameter<double>("digit_glare_brightness_threshold", 245.0);
+  digit_glare_ratio_threshold_ = declare_parameter<double>("digit_glare_ratio_threshold", 0.35);
+  digit_temporal_window_ = declare_parameter<int>("digit_temporal_window", 5);
+  digit_temporal_confirm_count_ = declare_parameter<int>("digit_temporal_confirm_count", 2);
 
   if (sync_queue_size_ <= 0 || sync_slop_ms_ <= 0 || stale_frame_timeout_ms_ <= 0 ||
-    max_future_skew_ms_ < 0 || frame_cache_size_ <= 0)
+    max_future_skew_ms_ < 0 || frame_cache_size_ <= 0 || digit_temporal_window_ <= 0 ||
+    digit_temporal_confirm_count_ <= 0)
   {
     throw std::runtime_error(
-            "sync_queue_size, sync_slop_ms, stale_frame_timeout_ms and frame_cache_size must be > 0, max_future_skew_ms must be >= 0");
+            "sync_queue_size, sync_slop_ms, stale_frame_timeout_ms, frame_cache_size, digit_temporal_window and digit_temporal_confirm_count must be > 0, max_future_skew_ms must be >= 0");
   }
 
-  if (sync_queue_size_ > kMaxSyncQueueSize || frame_cache_size_ > kMaxFrameCacheSize) {
+  if (sync_queue_size_ > kMaxSyncQueueSize || frame_cache_size_ > kMaxFrameCacheSize ||
+    digit_temporal_window_ > kMaxTemporalWindow)
+  {
     throw std::runtime_error(
-            "sync_queue_size/frame_cache_size exceed safety upper bound");
+            "sync_queue_size/frame_cache_size/digit_temporal_window exceed safety upper bound");
+  }
+
+  if (digit_temporal_confirm_count_ > digit_temporal_window_) {
+    throw std::runtime_error(
+            "digit_temporal_confirm_count must be <= digit_temporal_window");
   }
 
   frame_history_.set_capacity(static_cast<size_t>(frame_cache_size_));
   latency_samples_ms_.set_capacity(static_cast<size_t>(frame_cache_size_));
   end_to_end_latency_samples_ms_.set_capacity(static_cast<size_t>(frame_cache_size_));
+  digit_label_history_.set_capacity(static_cast<size_t>(digit_temporal_window_));
+  digit_latency_samples_ms_.set_capacity(static_cast<size_t>(frame_cache_size_));
 
   solver_ = Target3DSolverFactory::create(solver_type_, get_logger());
+  const DigitRecognizerParams recognizer_params{
+    digit_roi_x_,
+    digit_roi_y_,
+    digit_roi_width_,
+    digit_roi_height_,
+    digit_min_confidence_,
+    digit_glare_brightness_threshold_,
+    digit_glare_ratio_threshold_};
+  digit_recognizer_ = DigitRecognizerFactory::create(
+    digit_recognizer_type_,
+    recognizer_params,
+    get_logger());
+
   target3d_pub_ = create_publisher<dog_interfaces::msg::Target3D>(target3d_topic_, rclcpp::SensorDataQoS());
+  digit_result_pub_ = create_publisher<dog_interfaces::msg::Target3D>(
+    digit_result_topic_,
+    rclcpp::SensorDataQoS());
 
   initializeStaticTransform();
   setupSynchronizedPipeline();
 
   RCLCPP_INFO(
     get_logger(),
-    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, extrinsics_yaml_path=%s",
+    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, digit_result_topic=%s, extrinsics_yaml_path=%s",
     image_topic_.c_str(),
     pointcloud_topic_.c_str(),
     target3d_topic_.c_str(),
+    digit_result_topic_.c_str(),
     extrinsics_yaml_path_.c_str());
 }
 
@@ -238,8 +302,10 @@ bool PerceptionNode::evaluateRuntimeQosCompatibility()
   const auto check_topic = [this, expected](const std::string & topic_name) {
       const auto publishers = get_publishers_info_by_topic(topic_name);
       if (publishers.empty()) {
-        RCLCPP_WARN(
+        RCLCPP_WARN_THROTTLE(
           get_logger(),
+          *get_clock(),
+          5000,
           "No publishers discovered yet for topic=%s, defer QoS compatibility decision",
           topic_name.c_str());
         return true;
@@ -248,8 +314,10 @@ bool PerceptionNode::evaluateRuntimeQosCompatibility()
       for (const auto & endpoint : publishers) {
         const auto actual = endpoint.qos_profile().reliability();
         if (actual != expected) {
-          RCLCPP_ERROR(
+          RCLCPP_ERROR_THROTTLE(
             get_logger(),
+            *get_clock(),
+            2000,
             "QoS reliability mismatch on topic=%s, expected=%s, publisher=%s",
             topic_name.c_str(),
             reliabilityToString(expected).data(),
@@ -330,6 +398,18 @@ void PerceptionNode::synchronizedCallback(
 {
   const auto begin = now();
 
+  qos_compatible_ = evaluateRuntimeQosCompatibility();
+  if (!qos_compatible_) {
+    ++dropped_frame_count_;
+    frame_history_.push_back(FrameState{begin, 0.0, false});
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      2000,
+      "Dropped synced frame due to runtime QoS incompatibility");
+    return;
+  }
+
   if (shouldDropAsStale(image_msg, pointcloud_msg)) {
     ++dropped_frame_count_;
     frame_history_.push_back(FrameState{begin, 0.0, false});
@@ -341,6 +421,8 @@ void PerceptionNode::synchronizedCallback(
       stale_frame_timeout_ms_);
     return;
   }
+
+  processDigitRecognition(image_msg);
 
   SyncedSensorFrame frame;
   frame.image = image_msg;
@@ -394,6 +476,64 @@ void PerceptionNode::synchronizedCallback(
   target3d_pub_->publish(std::move(target3d_msg));
 }
 
+void PerceptionNode::processDigitRecognition(
+  const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
+{
+  const auto begin = now();
+
+  DigitRecognitionResult result;
+  try {
+    result = digit_recognizer_->infer(ImageView{image_msg});
+  } catch (const std::exception & exception) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "Digit recognizer exception: %s",
+      exception.what());
+    result = DigitRecognitionResult{false, -1, 0.0F, "recognizer_exception"};
+  }
+
+  digit_label_history_.push_back(result.has_feature ? result.label : -1);
+
+  if (result.has_feature) {
+    int confirmed_count = 0;
+    for (const int label : digit_label_history_) {
+      if (label == result.label) {
+        ++confirmed_count;
+      }
+    }
+
+    if (confirmed_count < digit_temporal_confirm_count_) {
+      result.has_feature = false;
+      result.reason = "temporal_unconfirmed";
+    }
+  }
+
+  auto message = toDigitTarget3D(image_msg, camera_extrinsics_.frame_id, result);
+  digit_result_pub_->publish(message);
+
+  const auto end = now();
+  const double elapsed_ms = static_cast<double>((end - begin).nanoseconds()) / 1e6;
+  digit_latency_samples_ms_.push_back(elapsed_ms);
+
+  const auto input_stamp = image_msg ? rclcpp::Time(image_msg->header.stamp) : begin;
+  const double input_age_ms = static_cast<double>((end - input_stamp).nanoseconds()) / 1e6;
+
+  RCLCPP_INFO_THROTTLE(
+    get_logger(),
+    *get_clock(),
+    1000,
+    "Digit result stamp=%u.%u, infer_ms=%.3f, confidence=%.3f, output=%s, reason=%s, input_age_ms=%.3f",
+    message.header.stamp.sec,
+    message.header.stamp.nanosec,
+    elapsed_ms,
+    result.confidence,
+    message.target_id.c_str(),
+    result.reason.c_str(),
+    input_age_ms);
+}
+
 size_t PerceptionNode::getFrameCacheSize() const
 {
   return frame_history_.size();
@@ -419,6 +559,11 @@ size_t PerceptionNode::getLatencySampleCount() const
   return latency_samples_ms_.size();
 }
 
+size_t PerceptionNode::getDigitLatencySampleCount() const
+{
+  return digit_latency_samples_ms_.size();
+}
+
 bool PerceptionNode::isQosCompatible() const
 {
   return qos_compatible_;
@@ -426,28 +571,17 @@ bool PerceptionNode::isQosCompatible() const
 
 double PerceptionNode::getLatencyP95Ms() const
 {
-  if (latency_samples_ms_.empty()) {
-    return 0.0;
-  }
-
-  std::vector<double> sorted(latency_samples_ms_.begin(), latency_samples_ms_.end());
-  std::sort(sorted.begin(), sorted.end());
-  const auto index = static_cast<size_t>(
-    std::ceil(static_cast<double>(sorted.size()) * 0.95) - 1.0);
-  return sorted[std::min(index, sorted.size() - 1)];
+  return percentile95(latency_samples_ms_);
 }
 
 double PerceptionNode::getEndToEndLatencyP95Ms() const
 {
-  if (end_to_end_latency_samples_ms_.empty()) {
-    return 0.0;
-  }
+  return percentile95(end_to_end_latency_samples_ms_);
+}
 
-  std::vector<double> sorted(end_to_end_latency_samples_ms_.begin(), end_to_end_latency_samples_ms_.end());
-  std::sort(sorted.begin(), sorted.end());
-  const auto index = static_cast<size_t>(
-    std::ceil(static_cast<double>(sorted.size()) * 0.95) - 1.0);
-  return sorted[std::min(index, sorted.size() - 1)];
+double PerceptionNode::getDigitLatencyP95Ms() const
+{
+  return percentile95(digit_latency_samples_ms_);
 }
 
 }  // namespace dog_perception

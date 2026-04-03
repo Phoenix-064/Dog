@@ -21,6 +21,7 @@ find_package(yaml-cpp REQUIRED)
 
 add_library(${PROJECT_NAME}_lib
   src/perception_node.cpp
+  src/digit_recognizer_factory.cpp
   src/target_3d_solver_factory.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
