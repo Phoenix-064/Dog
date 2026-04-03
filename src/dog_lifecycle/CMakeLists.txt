@@ -9,9 +9,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_library(${PROJECT_NAME}_lib
   src/lifecycle_node.cpp
+  src/yaml_state_store.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -22,6 +24,7 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   std_msgs
   dog_interfaces
 )
+target_link_libraries(${PROJECT_NAME}_lib yaml-cpp)
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
@@ -38,12 +41,22 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_lifecycle_node test/test_lifecycle_node.cpp)
   if(TARGET test_lifecycle_node)
     target_link_libraries(test_lifecycle_node ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_lifecycle_node rclcpp)
+  endif()
+
+  ament_add_gtest(test_yaml_state_store test/test_yaml_state_store.cpp)
+  if(TARGET test_yaml_state_store)
+    target_link_libraries(test_yaml_state_store ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_yaml_state_store rclcpp)
   endif()
 endif()
 

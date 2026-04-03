@@ -1,0 +1,8 @@
+dog_lifecycle:
+  ros__parameters:
+    persistence:
+      state_file_path: /tmp/dog_lifecycle/state.yaml
+      backup_file_path: /tmp/dog_lifecycle/state.bak.yaml
+      max_write_bytes: 16384
+      min_write_interval_ms: 100
+      state_version: 1
