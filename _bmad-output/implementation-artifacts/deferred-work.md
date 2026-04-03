@@ -9,3 +9,7 @@
 ## Deferred from: code review of 1-1-基础工程骨架与接口防腐层搭建 (2026-04-02)
 
 - `/target/pick_tasks` 契约语义与消息类型（`TargetArray[4]` vs `Target3D`）需先完成架构层统一决策后再改代码，避免在骨架阶段引入不稳定迁移。
+
+## Deferred from: code review of 2-1-实时全局本体位姿发布 (2026-04-03)
+
+- 节点生命周期编排（Lifecycle）一致性缺口：当前变更聚焦 Pose 发布链路，`dog_behavior` 节点是否迁移 LifecycleNode 需在系统编排层统一决策后处理。

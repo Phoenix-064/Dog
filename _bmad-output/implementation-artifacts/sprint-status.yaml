@@ -49,8 +49,8 @@ development_status:
   1-4-场地数字内容识别与语义下发: done
   1-5-持久化基础设施准备与-io-工具链: done
   epic-1-retrospective: optional
-  epic-2: backlog
-  2-1-实时全局本体位姿发布: backlog
+  epic-2: in-progress
+  2-1-实时全局本体位姿发布: in-progress
   2-2-异步动作指令-action-发送与监听: backlog
   epic-2-retrospective: optional
   epic-3: backlog
