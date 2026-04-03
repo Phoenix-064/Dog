@@ -58,3 +58,7 @@ _bmad
 
 # Test artifacts
 test_detail.xml
+
+# Runtime TF graph artifacts
+frames_*.gv
+frames_*.pdf

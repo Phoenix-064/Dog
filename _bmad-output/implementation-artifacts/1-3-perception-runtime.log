@@ -1,0 +1,3 @@
+[INFO] [1775213435.315046848] [dog_perception]: Published static TF frame_id=base_link child_frame_id=camera_optical_frame
+[INFO] [1775213435.315504143] [dog_perception]: Synchronized pipeline ready, queue=10, slop_ms=25, stale_timeout_ms=50, qos_reliability=best_effort
+[INFO] [1775213435.315518409] [dog_perception]: dog_perception initialized, image_topic=/camera/image_raw, pointcloud_topic=/livox/lidar, target3d_topic=/target/target_3d, extrinsics_yaml_path=/home/phoenix/source/Dog/install/dog_perception/share/dog_perception/config/camera_extrinsics.yaml

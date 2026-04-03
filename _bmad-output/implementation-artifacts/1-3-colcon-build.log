@@ -1,0 +1,10 @@
+Starting >>> dog_interfaces
+Finished <<< dog_interfaces [0.28s]
+Starting >>> dog_behavior
+Starting >>> dog_lifecycle
+Starting >>> dog_perception
+Finished <<< dog_lifecycle [0.10s]
+Finished <<< dog_behavior [0.12s]
+Finished <<< dog_perception [0.58s]
+
+Summary: 4 packages finished [1.06s]
