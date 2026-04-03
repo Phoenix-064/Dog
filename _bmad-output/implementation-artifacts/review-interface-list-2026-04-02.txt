@@ -1,0 +1,3 @@
+    dog_interfaces/msg/Target3D
+    dog_interfaces/srv/MathDetect
+    dog_interfaces/action/ExecuteBehavior

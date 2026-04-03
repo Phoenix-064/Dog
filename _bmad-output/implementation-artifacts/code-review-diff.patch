@@ -1,0 +1,1071 @@
+]633;E;2026-04-02 15:36:03 python3;7e0a6a56-a26e-46b5-9809-7915f523efc4]633;Cdiff --git a/.gitignore b/.gitignore
+index f5ff385..b6eb401 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -48,3 +48,8 @@ compile_commands.json
+ .Trashes
+ ehthumbs.db
+ Thumbs.db
++
++# AI
++_bmad*
++.claude
++.github/skills
+diff --git a/src/Detect/CMakeLists.txt b/src/Detect/CMakeLists.txt
+deleted file mode 100644
+index eb611de..0000000
+--- a/src/Detect/CMakeLists.txt
++++ /dev/null
+@@ -1,25 +0,0 @@
+-cmake_minimum_required(VERSION 3.8)
+-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+-project(Detect)
+-
+-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+-  add_compile_options(-Wall -Wextra -Wpedantic)
+-endif()
+-
+-# find dependencies
+-find_package(ament_cmake REQUIRED)
+-find_package(rclcpp REQUIRED)
+-
+-if(BUILD_TESTING)
+-  find_package(ament_lint_auto REQUIRED)
+-  # the following line skips the linter which checks for copyrights
+-  # comment the line when a copyright and license is added to all source files
+-  set(ament_cmake_copyright_FOUND TRUE)
+-  # the following line skips cpplint (only works in a git repo)
+-  # comment the line when this package is in a git repo and when
+-  # a copyright and license is added to all source files
+-  set(ament_cmake_cpplint_FOUND TRUE)
+-  ament_lint_auto_find_test_dependencies()
+-endif()
+-
+-ament_package()
+diff --git a/src/Detect/package.xml b/src/Detect/package.xml
+deleted file mode 100644
+index 4f3e800..0000000
+--- a/src/Detect/package.xml
++++ /dev/null
+@@ -1,20 +0,0 @@
+-<?xml version="1.0"?>
+-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+-<package format="3">
+-  <name>Detect</name>
+-  <version>0.0.0</version>
+-  <description>TODO: Package description</description>
+-  <maintainer email="3440480965@qq.com">phoenix</maintainer>
+-  <license>TODO: License declaration</license>
+-
+-  <buildtool_depend>ament_cmake</buildtool_depend>
+-
+-  <depend>rclcpp</depend>
+-
+-  <test_depend>ament_lint_auto</test_depend>
+-  <test_depend>ament_lint_common</test_depend>
+-
+-  <export>
+-    <build_type>ament_cmake</build_type>
+-  </export>
+-</package>
+diff --git a/src/Localization/CMakeLists.txt b/src/Localization/CMakeLists.txt
+deleted file mode 100644
+index 335cdcb..0000000
+--- a/src/Localization/CMakeLists.txt
++++ /dev/null
+@@ -1,25 +0,0 @@
+-cmake_minimum_required(VERSION 3.8)
+-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+-project(Localization)
+-
+-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+-  add_compile_options(-Wall -Wextra -Wpedantic)
+-endif()
+-
+-# find dependencies
+-find_package(ament_cmake REQUIRED)
+-find_package(rclcpp REQUIRED)
+-
+-if(BUILD_TESTING)
+-  find_package(ament_lint_auto REQUIRED)
+-  # the following line skips the linter which checks for copyrights
+-  # comment the line when a copyright and license is added to all source files
+-  set(ament_cmake_copyright_FOUND TRUE)
+-  # the following line skips cpplint (only works in a git repo)
+-  # comment the line when this package is in a git repo and when
+-  # a copyright and license is added to all source files
+-  set(ament_cmake_cpplint_FOUND TRUE)
+-  ament_lint_auto_find_test_dependencies()
+-endif()
+-
+-ament_package()
+diff --git a/src/Localization/package.xml b/src/Localization/package.xml
+deleted file mode 100644
+index 8188e0c..0000000
+--- a/src/Localization/package.xml
++++ /dev/null
+@@ -1,20 +0,0 @@
+-<?xml version="1.0"?>
+-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+-<package format="3">
+-  <name>Localization</name>
+-  <version>0.0.0</version>
+-  <description>TODO: Package description</description>
+-  <maintainer email="3440480965@qq.com">phoenix</maintainer>
+-  <license>TODO: License declaration</license>
+-
+-  <buildtool_depend>ament_cmake</buildtool_depend>
+-
+-  <depend>rclcpp</depend>
+-
+-  <test_depend>ament_lint_auto</test_depend>
+-  <test_depend>ament_lint_common</test_depend>
+-
+-  <export>
+-    <build_type>ament_cmake</build_type>
+-  </export>
+-</package>
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..7c1efc2
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,10 @@
++# 架构与设计 (Architecture Design)
++
++## 技术栈
++- 操作系统：Ubuntu 22.04
++- 语言：C++
++- 通讯框架：ROS 2 Humble
++- 依赖：Livox SDK, CMake
++
++## 架构模式
++分布式节点架构 (Publish-Subscribe) - 所有传感器采集到的点云通过 `livox_ros_driver2` 发布，由 `point_lio` 及 `Localization` 输出 Odom/TF 数据；相机数据被 `Detect` 模块处理以标识物体，各结果最终由 ROS 发布供运动模块使用。
+diff --git a/docs/development-instructions.md b/docs/development-instructions.md
+new file mode 100644
+index 0000000..1705254
+--- /dev/null
++++ b/docs/development-instructions.md
+@@ -0,0 +1,21 @@
++# 开发指令
++
++## 先决条件 (Prerequisites)
++- Ubuntu 22.04
++- ROS 2 Humble
++- C++ 编译器 (GCC)
++- CMake
++- NUC 硬件环境
++
++## 构建说明 (Build Instructions)
++本项目使用标准的 ROS2 Humble 构建系统。请使用 `colcon build` 进行编译：
++
++```bash
++mkdir -p workspace/src
++cp -r src/* workspace/src/
++cd workspace
++colcon build
++```
++
++## 运行与部署
++主要采用在 NUC 上的直接运行方式，通过 ROS 各个节点通信来输出处理后的视觉和定位数据至运动控制模块。
+diff --git a/docs/index.md b/docs/index.md
+new file mode 100644
+index 0000000..5846878
+--- /dev/null
++++ b/docs/index.md
+@@ -0,0 +1,9 @@
++# 机器狗视觉与定位系统 (Dog Vision & Localization)
++
++## 文档索引
++1. [项目概览 (Project Overview)](project-overview.md)
++2. [源码结构树 (Source Tree)](source-tree-analysis.md)
++3. [开发与部署 (Development & Deployment)](development-instructions.md)
++4. [系统集成 (Integration Architecture)](integration-architecture.md)
++5. [系统架构 (System Architecture)](architecture.md)
++6. [接口架构规约草案 (Interface Architecture)](interface-architecture.md)
+diff --git a/docs/integration-architecture.md b/docs/integration-architecture.md
+new file mode 100644
+index 0000000..f7442f6
+--- /dev/null
++++ b/docs/integration-architecture.md
+@@ -0,0 +1,23 @@
++# 集成架构 (Integration Architecture)
++
++本项目包含 4 个基于 ROS 2 Humble 的通讯节点模块：
++
++1. **Detect** (视觉目标检测)
++2. **livox_ros_driver2** (Livox 激光雷达驱动)
++3. **Localization** (定位模块)
++4. **point_lio** (基于点云的里程计与定位)
++
++## 通信协议
++本项目的主要部件运行在一个 ROS 2 Humble 运行时网络中，遵循发布-订阅 (Publish-Subscribe) 模型。
++
++### 数据流向
++1. **livox_ros_driver2** 作为硬件接口部分，通过网络从激光雷达采集点云数据，并以 ROS Topic (`/livox/lidar` 等) 的格式发布出去。
++2. **point_lio** 或 **Localization** 订阅点云主题结合特征提取给出高精度的里程计算法与定位姿态。
++3. **Detect** 会订阅相机和（或）雷达融合后的数据来进行目标分类与检测，并将结果发送出去。
++4. 所有最终的定位姿态和相对目标状态，通过 ROS 2 发送到**运动控制项目模块**，进行四足机器狗的联合控制。
++
++## 集成接口详情
++- **类型**: ROS Topic 通信。
++- **频次**: 典型为 10Hz - 100Hz 之间以适用实时要求。
++- **协议**: 自定义 ROS Message。
++
+diff --git a/docs/interface-architecture.md b/docs/interface-architecture.md
+new file mode 100644
+index 0000000..383b445
+--- /dev/null
++++ b/docs/interface-architecture.md
+@@ -0,0 +1,43 @@
++# 视觉定位系统与底层运动控制通信接口架构规约草案
++
++此文档基于视觉组侧（Dog Vision & Localization）的需求以及任务特性（解题、满载4个箱子双向运送、回收区归类放置）与运动控制侧确定的解耦通信架构。
++
++## 1. 架构核心思想
++
++- **高内聚低耦合 (瘦客户端模式)：** 运动控制系统被设计为“纯粹的高速执行盲盒”，自身不搭载任务状态机，不进行策略选择，不处理例如箱子类别分类或比赛得分计算等上层业务感知。
++- **纯 Topics 更新驱动：** 抛弃繁琐费时的 Request-Response (Service) 一问一答机制，避免增加同步复杂度。视觉侧规划层全权掌握全局，并向明确的动作 Topic 下发高频覆盖的执行坐标集进行驱动。
++
++## 2. 核心话题 (Topics) 规约概览
++
++| 话题名称 | 方向 | 发送频率 | 数据内容与职责概述 |
++| --- | --- | --- | --- |
++| `/localization/dog` | 视觉层 -> 运控层 | 高频 (持续) | 当前机器狗自身的世界坐标与姿态 (x, y, z, roll, pitch, yaw)。供底盘做里程计融合与反馈。 |
++| `/localization/boxes` | 视觉层 -> 规划层 | 高频 (持续) | 全量发布的场地8个箱子的全量精确坐标和类型。作为系统世界地图使用，甚至不需要传递给底层，在策略层闭环。 |
++
++### 2.1 基于四爪并行的抓取通道
++
++机器狗被约束为前向4爪并行作业（分2次满载）。
++
++| 话题名称 | 方向 | 发送频率 | 数据内容与职责概述 |
++| --- | --- | --- | --- |
++| `/target/pick_tasks` | 规划层 -> 运控层 | 按需 (高频覆盖)| 一个 `TargetArray[4]`，包含4爪分别对应要去抓握的4个目标位置绝对/相对坐标。运控层订阅到该数组后，自主计算其共同中心进行移动停靠并下放4爪一并执行。 |
++
++### 2.2 基于分类的放置通道
++
++既然视觉闭环维护了各爪所持有的箱子 ID，在分类丢入回收区时，将下发确切规划的落点：
++
++| 话题名称 | 方向 | 发送频率 | 数据内容与职责概述 |
++| --- | --- | --- | --- |
++| `/target/place_tasks` | 规划层 -> 运控层 | 按需 | 一个包含目标解算后的队列，包含执行命令，形如：`[ {爪子ID: 2, Action: 释出, 对应绝对目标坐标: X,Y,Z ...}, ... ]`，运控只需要照做去坐标系开/关指定爪子。 |
++
++## 3. 边界情况：抓空处理 (Error Resolving)
++
++对于致命性的抓取落空，我们采取 **“0新增接口的纯视觉闭环重试”** 策略：
++
++1. **零新增硬件接口：** 运控自身无需加装冗余状态探测并在接口上回复类似“2号空了”。
++2. **闭环视觉裁定：** 下发抓取完毕信号归位后，鉴于狗不可随意动头（以免重置位姿引发误差），由处于稳定视角的深度/广角传感器直接重新感知箱子栅格。只要原抓取位域上仍停有“残留标识物”，即由上层视觉判定为“抓取失败”。
++3. **原位阻塞微调：** 确立“4个空爪必须满载才可离去”的硬约束。当视觉发现某号落空时，将阻塞寻路模块。规划层生成基于误差微量偏移后的新目标点仅下发包含未满载爪子的`/target/pick_tasks`，直至触发成功闭环后继续任务。
++
++## 4. 其余系统解耦
++
++诸如：读取任务角落的数学面板、算出答案数字乃至改变未来展示面板。由于只与比赛机制的分数加权挂钩而不改变“满载搬运所有”这个根本物理策略。统统由视觉端闭环处理并挂载展示节点，这些信息对物理执行控制板层 **绝对透明且不可见**。
+diff --git a/docs/project-overview.md b/docs/project-overview.md
+new file mode 100644
+index 0000000..cc60020
+--- /dev/null
++++ b/docs/project-overview.md
+@@ -0,0 +1,14 @@
++# 项目概览 (Project Overview)
++
++## 目的
++本项目为机器狗的视觉识别、定位及行为模块，基于 Ubuntu 22.04 和 ROS 2 Humble (C++) 开发，主要运行在 NUC 上，将处理后的数据传递给独立外包的运动控制系统。
++
++## 库结构
++四部分构成的 Monorepo：
++- **Detect**: 视觉目标检测
++- **livox_ros_driver2**: 激光雷达驱动
++- **Localization**: 定位模块
++- **point_lio**: 里程计与定位
++
++## 架构概览
++各模块作为 ROS 节点，通过主题进行解耦的数据采集计算和通讯发送。
+diff --git a/docs/project-scan-report.json b/docs/project-scan-report.json
+new file mode 100644
+index 0000000..a7bb96e
+--- /dev/null
++++ b/docs/project-scan-report.json
+@@ -0,0 +1,96 @@
++{
++  "workflow_version": "1.2.0",
++  "timestamps": {
++    "started": "2026-03-30T11:21:29.900Z",
++    "last_updated": "2026-03-30T20:51:21.595600"
++  },
++  "mode": "initial_scan",
++  "scan_level": "deep",
++  "project_root": "/home/phoenix/source/Dog",
++  "project_knowledge": "/home/phoenix/source/Dog/docs",
++  "completed_steps": [
++    {
++      "step": "step_1",
++      "status": "completed",
++      "timestamp": "2026-03-30T11:23:29.900Z",
++      "summary": "Classified as monorepo with 4 parts"
++    },
++    {
++      "step": "step_2",
++      "status": "completed",
++      "timestamp": "2026-03-30T11:25:29.900Z",
++      "summary": "Found 7 existing docs"
++    },
++    {
++      "step": "step_3",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:44:18.955204",
++      "summary": "Tech stack: C++, ROS"
++    },
++    {
++      "step": "step_4",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:48:01.656047",
++      "summary": "Scanned conditional requirements (hardware docs)"
++    },
++    {
++      "step": "step_5",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:48:56.341818",
++      "summary": "Source tree documented"
++    },
++    {
++      "step": "step_5",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:49:23.864820",
++      "summary": "Source tree documented"
++    },
++    {
++      "step": "step_6",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:49:53.711579",
++      "summary": "Development instructions extracted"
++    },
++    {
++      "step": "step_7",
++      "status": "completed",
++      "timestamp": "2026-03-30T20:51:21.595584",
++      "summary": "Integration architecture documented"
++    }
++  ],
++  "current_step": "step_8",
++  "findings": {
++    "project_classification": "monorepo with 4 embedded/robotics parts",
++    "hardware_docs": "No hardware schematics. Runs on NUC, uses ROS2 to send data to motion control project."
++  },
++  "outputs_generated": [
++    "project-scan-report.json",
++    "source-tree-analysis.md",
++    "source-tree-analysis.md",
++    "development-instructions.md",
++    "integration-architecture.md"
++  ],
++  "resume_instructions": "Starting from step 1",
++  "project_types": [
++    {
++      "part_id": "Detect",
++      "project_type_id": "embedded",
++      "display_name": "Detect"
++    },
++    {
++      "part_id": "livox_ros_driver2",
++      "project_type_id": "embedded",
++      "display_name": "livox_ros_driver2"
++    },
++    {
++      "part_id": "Localization",
++      "project_type_id": "embedded",
++      "display_name": "Localization"
++    },
++    {
++      "part_id": "point_lio",
++      "project_type_id": "embedded",
++      "display_name": "point_lio"
++    }
++  ]
++}
+\ No newline at end of file
+diff --git a/docs/source-tree-analysis.md b/docs/source-tree-analysis.md
+new file mode 100644
+index 0000000..37a8712
+--- /dev/null
++++ b/docs/source-tree-analysis.md
+@@ -0,0 +1,3 @@
++# Source Tree Analysis
++
++
+diff --git a/src/dog_behavior/CMakeLists.txt b/src/dog_behavior/CMakeLists.txt
+new file mode 100644
+index 0000000..1ca5025
+--- /dev/null
++++ b/src/dog_behavior/CMakeLists.txt
+@@ -0,0 +1,54 @@
++cmake_minimum_required(VERSION 3.8)
++project(dog_behavior)
++
++if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++  add_compile_options(-Wall -Wextra -Wpedantic)
++endif()
++
++find_package(ament_cmake REQUIRED)
++find_package(rclcpp REQUIRED)
++find_package(nav_msgs REQUIRED)
++find_package(geometry_msgs REQUIRED)
++find_package(std_msgs REQUIRED)
++find_package(dog_interfaces REQUIRED)
++
++add_library(${PROJECT_NAME}_lib
++  src/behavior_node.cpp
++)
++target_include_directories(${PROJECT_NAME}_lib PUBLIC
++  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
++  $<INSTALL_INTERFACE:include>
++)
++ament_target_dependencies(${PROJECT_NAME}_lib
++  rclcpp
++  nav_msgs
++  geometry_msgs
++  std_msgs
++  dog_interfaces
++)
++
++add_executable(${PROJECT_NAME}_node src/main.cpp)
++target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
++
++install(TARGETS
++  ${PROJECT_NAME}_lib
++  ${PROJECT_NAME}_node
++  ARCHIVE DESTINATION lib
++  LIBRARY DESTINATION lib
++  RUNTIME DESTINATION lib/${PROJECT_NAME}
++)
++
++install(DIRECTORY include/
++  DESTINATION include
++)
++
++if(BUILD_TESTING)
++  find_package(ament_cmake_gtest REQUIRED)
++  ament_add_gtest(test_behavior_node test/test_behavior_node.cpp)
++  if(TARGET test_behavior_node)
++    target_link_libraries(test_behavior_node ${PROJECT_NAME}_lib)
++    ament_target_dependencies(test_behavior_node rclcpp)
++  endif()
++endif()
++
++ament_package()
+\ No newline at end of file
+diff --git a/src/dog_behavior/include/dog_behavior/behavior_node.hpp b/src/dog_behavior/include/dog_behavior/behavior_node.hpp
+new file mode 100644
+index 0000000..193ab32
+--- /dev/null
++++ b/src/dog_behavior/include/dog_behavior/behavior_node.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <dog_interfaces/msg/target3_d.hpp>
++#include <nav_msgs/msg/odometry.hpp>
++#include <rclcpp/rclcpp.hpp>
++
++namespace dog_behavior
++{
++
++class BehaviorNode : public rclcpp::Node
++{
++public:
++  BehaviorNode();
++
++private:
++  void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
++
++  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
++  rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr target_pub_;
++};
++
++}  // namespace dog_behavior
+\ No newline at end of file
+diff --git a/src/dog_behavior/package.xml b/src/dog_behavior/package.xml
+new file mode 100644
+index 0000000..7e7870a
+--- /dev/null
++++ b/src/dog_behavior/package.xml
+@@ -0,0 +1,22 @@
++<?xml version="1.0"?>
++<package format="3">
++  <name>dog_behavior</name>
++  <version>0.0.1</version>
++  <description>Behavior node skeleton for Dog project.</description>
++  <maintainer email="dev@example.com">dog</maintainer>
++  <license>Apache-2.0</license>
++
++  <buildtool_depend>ament_cmake</buildtool_depend>
++
++  <depend>rclcpp</depend>
++  <depend>nav_msgs</depend>
++  <depend>geometry_msgs</depend>
++  <depend>std_msgs</depend>
++  <depend>dog_interfaces</depend>
++
++  <test_depend>ament_cmake_gtest</test_depend>
++
++  <export>
++    <build_type>ament_cmake</build_type>
++  </export>
++</package>
+\ No newline at end of file
+diff --git a/src/dog_behavior/src/behavior_node.cpp b/src/dog_behavior/src/behavior_node.cpp
+new file mode 100644
+index 0000000..9083a40
+--- /dev/null
++++ b/src/dog_behavior/src/behavior_node.cpp
+@@ -0,0 +1,29 @@
++#include "dog_behavior/behavior_node.hpp"
++
++#include <functional>
++
++namespace dog_behavior
++{
++
++BehaviorNode::BehaviorNode()
++: rclcpp::Node("dog_behavior")
++{
++  target_pub_ = create_publisher<dog_interfaces::msg::Target3D>("/dog/target_3d", 10);
++  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
++    "/dog/odom",
++    10,
++    std::bind(&BehaviorNode::odomCallback, this, std::placeholders::_1));
++
++  RCLCPP_INFO(get_logger(), "dog_behavior skeleton node initialized");
++}
++
++void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
++{
++  (void)msg;
++  dog_interfaces::msg::Target3D target;
++  target.target_id = "placeholder";
++  target.confidence = 0.0F;
++  target_pub_->publish(target);
++}
++
++}  // namespace dog_behavior
+\ No newline at end of file
+diff --git a/src/dog_behavior/src/main.cpp b/src/dog_behavior/src/main.cpp
+new file mode 100644
+index 0000000..9b67a92
+--- /dev/null
++++ b/src/dog_behavior/src/main.cpp
+@@ -0,0 +1,10 @@
++#include "dog_behavior/behavior_node.hpp"
++
++int main(int argc, char ** argv)
++{
++  rclcpp::init(argc, argv);
++  auto node = std::make_shared<dog_behavior::BehaviorNode>();
++  rclcpp::spin(node);
++  rclcpp::shutdown();
++  return 0;
++}
+\ No newline at end of file
+diff --git a/src/dog_behavior/test/test_behavior_node.cpp b/src/dog_behavior/test/test_behavior_node.cpp
+new file mode 100644
+index 0000000..b8b986e
+--- /dev/null
++++ b/src/dog_behavior/test/test_behavior_node.cpp
+@@ -0,0 +1,11 @@
++#include "dog_behavior/behavior_node.hpp"
++
++#include <gtest/gtest.h>
++
++TEST(BehaviorNodeTest, NodeName)
++{
++  rclcpp::init(0, nullptr);
++  auto node = std::make_shared<dog_behavior::BehaviorNode>();
++  EXPECT_STREQ(node->get_name(), "dog_behavior");
++  rclcpp::shutdown();
++}
+\ No newline at end of file
+diff --git a/src/dog_interfaces/CMakeLists.txt b/src/dog_interfaces/CMakeLists.txt
+new file mode 100644
+index 0000000..369f7f2
+--- /dev/null
++++ b/src/dog_interfaces/CMakeLists.txt
+@@ -0,0 +1,35 @@
++cmake_minimum_required(VERSION 3.8)
++project(dog_interfaces)
++
++if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++  add_compile_options(-Wall -Wextra -Wpedantic)
++endif()
++
++find_package(ament_cmake REQUIRED)
++find_package(rosidl_default_generators REQUIRED)
++find_package(std_msgs REQUIRED)
++find_package(geometry_msgs REQUIRED)
++find_package(sensor_msgs REQUIRED)
++
++set(msg_files
++  "msg/Target3D.msg"
++)
++
++set(srv_files
++  "srv/MathDetect.srv"
++)
++
++set(action_files
++  "action/ExecuteBehavior.action"
++)
++
++rosidl_generate_interfaces(${PROJECT_NAME}
++  ${msg_files}
++  ${srv_files}
++  ${action_files}
++  DEPENDENCIES std_msgs geometry_msgs sensor_msgs
++)
++
++ament_export_dependencies(rosidl_default_runtime)
++
++ament_package()
+\ No newline at end of file
+diff --git a/src/dog_interfaces/action/ExecuteBehavior.action b/src/dog_interfaces/action/ExecuteBehavior.action
+new file mode 100644
+index 0000000..a094db0
+--- /dev/null
++++ b/src/dog_interfaces/action/ExecuteBehavior.action
+@@ -0,0 +1,8 @@
++string behavior_name
++geometry_msgs/PoseStamped target_pose
++---
++bool accepted
++string detail
++---
++float32 progress
++string state
+\ No newline at end of file
+diff --git a/src/dog_interfaces/msg/Target3D.msg b/src/dog_interfaces/msg/Target3D.msg
+new file mode 100644
+index 0000000..d81e61a
+--- /dev/null
++++ b/src/dog_interfaces/msg/Target3D.msg
+@@ -0,0 +1,4 @@
++std_msgs/Header header
++string target_id
++geometry_msgs/Point position
++float32 confidence
+\ No newline at end of file
+diff --git a/src/dog_interfaces/package.xml b/src/dog_interfaces/package.xml
+new file mode 100644
+index 0000000..2dfef06
+--- /dev/null
++++ b/src/dog_interfaces/package.xml
+@@ -0,0 +1,23 @@
++<?xml version="1.0"?>
++<package format="3">
++  <name>dog_interfaces</name>
++  <version>0.0.1</version>
++  <description>Cross-module messages, services, and actions for Dog project.</description>
++  <maintainer email="dev@example.com">dog</maintainer>
++  <license>Apache-2.0</license>
++
++  <buildtool_depend>ament_cmake</buildtool_depend>
++
++  <build_depend>rosidl_default_generators</build_depend>
++  <depend>std_msgs</depend>
++  <depend>geometry_msgs</depend>
++  <depend>sensor_msgs</depend>
++
++  <exec_depend>rosidl_default_runtime</exec_depend>
++
++  <member_of_group>rosidl_interface_packages</member_of_group>
++
++  <export>
++    <build_type>ament_cmake</build_type>
++  </export>
++</package>
+\ No newline at end of file
+diff --git a/src/dog_interfaces/srv/MathDetect.srv b/src/dog_interfaces/srv/MathDetect.srv
+new file mode 100644
+index 0000000..6a6d13b
+--- /dev/null
++++ b/src/dog_interfaces/srv/MathDetect.srv
+@@ -0,0 +1,6 @@
++sensor_msgs/Image image
++---
++bool success
++string expression
++float32 value
++string message
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/CMakeLists.txt b/src/dog_lifecycle/CMakeLists.txt
+new file mode 100644
+index 0000000..dea1405
+--- /dev/null
++++ b/src/dog_lifecycle/CMakeLists.txt
+@@ -0,0 +1,50 @@
++cmake_minimum_required(VERSION 3.8)
++project(dog_lifecycle)
++
++if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++  add_compile_options(-Wall -Wextra -Wpedantic)
++endif()
++
++find_package(ament_cmake REQUIRED)
++find_package(rclcpp REQUIRED)
++find_package(std_msgs REQUIRED)
++find_package(dog_interfaces REQUIRED)
++
++add_library(${PROJECT_NAME}_lib
++  src/lifecycle_node.cpp
++)
++target_include_directories(${PROJECT_NAME}_lib PUBLIC
++  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
++  $<INSTALL_INTERFACE:include>
++)
++ament_target_dependencies(${PROJECT_NAME}_lib
++  rclcpp
++  std_msgs
++  dog_interfaces
++)
++
++add_executable(${PROJECT_NAME}_node src/main.cpp)
++target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
++
++install(TARGETS
++  ${PROJECT_NAME}_lib
++  ${PROJECT_NAME}_node
++  ARCHIVE DESTINATION lib
++  LIBRARY DESTINATION lib
++  RUNTIME DESTINATION lib/${PROJECT_NAME}
++)
++
++install(DIRECTORY include/
++  DESTINATION include
++)
++
++if(BUILD_TESTING)
++  find_package(ament_cmake_gtest REQUIRED)
++  ament_add_gtest(test_lifecycle_node test/test_lifecycle_node.cpp)
++  if(TARGET test_lifecycle_node)
++    target_link_libraries(test_lifecycle_node ${PROJECT_NAME}_lib)
++    ament_target_dependencies(test_lifecycle_node rclcpp)
++  endif()
++endif()
++
++ament_package()
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp b/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp
+new file mode 100644
+index 0000000..d6b829d
+--- /dev/null
++++ b/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <dog_interfaces/srv/math_detect.hpp>
++#include <rclcpp/rclcpp.hpp>
++
++namespace dog_lifecycle
++{
++
++class LifecycleNode : public rclcpp::Node
++{
++public:
++  LifecycleNode();
++
++private:
++  void handleMathDetect(
++    const std::shared_ptr<dog_interfaces::srv::MathDetect::Request> request,
++    std::shared_ptr<dog_interfaces::srv::MathDetect::Response> response);
++
++  rclcpp::Service<dog_interfaces::srv::MathDetect>::SharedPtr math_detect_service_;
++};
++
++}  // namespace dog_lifecycle
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/package.xml b/src/dog_lifecycle/package.xml
+new file mode 100644
+index 0000000..70e4c43
+--- /dev/null
++++ b/src/dog_lifecycle/package.xml
+@@ -0,0 +1,20 @@
++<?xml version="1.0"?>
++<package format="3">
++  <name>dog_lifecycle</name>
++  <version>0.0.1</version>
++  <description>Lifecycle and gateway node skeleton for Dog project.</description>
++  <maintainer email="dev@example.com">dog</maintainer>
++  <license>Apache-2.0</license>
++
++  <buildtool_depend>ament_cmake</buildtool_depend>
++
++  <depend>rclcpp</depend>
++  <depend>std_msgs</depend>
++  <depend>dog_interfaces</depend>
++
++  <test_depend>ament_cmake_gtest</test_depend>
++
++  <export>
++    <build_type>ament_cmake</build_type>
++  </export>
++</package>
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/src/lifecycle_node.cpp b/src/dog_lifecycle/src/lifecycle_node.cpp
+new file mode 100644
+index 0000000..cf5121c
+--- /dev/null
++++ b/src/dog_lifecycle/src/lifecycle_node.cpp
+@@ -0,0 +1,33 @@
++#include "dog_lifecycle/lifecycle_node.hpp"
++
++#include <functional>
++
++namespace dog_lifecycle
++{
++
++LifecycleNode::LifecycleNode()
++: rclcpp::Node("dog_lifecycle")
++{
++  math_detect_service_ = create_service<dog_interfaces::srv::MathDetect>(
++    "/dog/math_detect",
++    std::bind(
++      &LifecycleNode::handleMathDetect,
++      this,
++      std::placeholders::_1,
++      std::placeholders::_2));
++
++  RCLCPP_INFO(get_logger(), "dog_lifecycle skeleton node initialized");
++}
++
++void LifecycleNode::handleMathDetect(
++  const std::shared_ptr<dog_interfaces::srv::MathDetect::Request> request,
++  std::shared_ptr<dog_interfaces::srv::MathDetect::Response> response)
++{
++  (void)request;
++  response->success = false;
++  response->expression = "";
++  response->value = 0.0F;
++  response->message = "math detect skeleton not implemented";
++}
++
++}  // namespace dog_lifecycle
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/src/main.cpp b/src/dog_lifecycle/src/main.cpp
+new file mode 100644
+index 0000000..6321293
+--- /dev/null
++++ b/src/dog_lifecycle/src/main.cpp
+@@ -0,0 +1,10 @@
++#include "dog_lifecycle/lifecycle_node.hpp"
++
++int main(int argc, char ** argv)
++{
++  rclcpp::init(argc, argv);
++  auto node = std::make_shared<dog_lifecycle::LifecycleNode>();
++  rclcpp::spin(node);
++  rclcpp::shutdown();
++  return 0;
++}
+\ No newline at end of file
+diff --git a/src/dog_lifecycle/test/test_lifecycle_node.cpp b/src/dog_lifecycle/test/test_lifecycle_node.cpp
+new file mode 100644
+index 0000000..aa7a9fe
+--- /dev/null
++++ b/src/dog_lifecycle/test/test_lifecycle_node.cpp
+@@ -0,0 +1,11 @@
++#include "dog_lifecycle/lifecycle_node.hpp"
++
++#include <gtest/gtest.h>
++
++TEST(LifecycleNodeTest, NodeName)
++{
++  rclcpp::init(0, nullptr);
++  auto node = std::make_shared<dog_lifecycle::LifecycleNode>();
++  EXPECT_STREQ(node->get_name(), "dog_lifecycle");
++  rclcpp::shutdown();
++}
+\ No newline at end of file
+diff --git a/src/dog_perception/CMakeLists.txt b/src/dog_perception/CMakeLists.txt
+new file mode 100644
+index 0000000..21f0f0e
+--- /dev/null
++++ b/src/dog_perception/CMakeLists.txt
+@@ -0,0 +1,56 @@
++cmake_minimum_required(VERSION 3.8)
++project(dog_perception)
++
++if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++  add_compile_options(-Wall -Wextra -Wpedantic)
++endif()
++
++find_package(ament_cmake REQUIRED)
++find_package(rclcpp REQUIRED)
++find_package(sensor_msgs REQUIRED)
++find_package(vision_msgs REQUIRED)
++find_package(cv_bridge REQUIRED)
++find_package(geometry_msgs REQUIRED)
++find_package(dog_interfaces REQUIRED)
++
++add_library(${PROJECT_NAME}_lib
++  src/perception_node.cpp
++)
++target_include_directories(${PROJECT_NAME}_lib PUBLIC
++  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
++  $<INSTALL_INTERFACE:include>
++)
++ament_target_dependencies(${PROJECT_NAME}_lib
++  rclcpp
++  sensor_msgs
++  vision_msgs
++  cv_bridge
++  geometry_msgs
++  dog_interfaces
++)
++
++add_executable(${PROJECT_NAME}_node src/main.cpp)
++target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
++
++install(TARGETS
++  ${PROJECT_NAME}_lib
++  ${PROJECT_NAME}_node
++  ARCHIVE DESTINATION lib
++  LIBRARY DESTINATION lib
++  RUNTIME DESTINATION lib/${PROJECT_NAME}
++)
++
++install(DIRECTORY include/
++  DESTINATION include
++)
++
++if(BUILD_TESTING)
++  find_package(ament_cmake_gtest REQUIRED)
++  ament_add_gtest(test_perception_node test/test_perception_node.cpp)
++  if(TARGET test_perception_node)
++    target_link_libraries(test_perception_node ${PROJECT_NAME}_lib)
++    ament_target_dependencies(test_perception_node rclcpp)
++  endif()
++endif()
++
++ament_package()
+\ No newline at end of file
+diff --git a/src/dog_perception/include/dog_perception/perception_node.hpp b/src/dog_perception/include/dog_perception/perception_node.hpp
+new file mode 100644
+index 0000000..cb2b06e
+--- /dev/null
++++ b/src/dog_perception/include/dog_perception/perception_node.hpp
+@@ -0,0 +1,20 @@
++#pragma once
++
++#include <rclcpp/rclcpp.hpp>
++#include <sensor_msgs/msg/point_cloud2.hpp>
++
++namespace dog_perception
++{
++
++class PerceptionNode : public rclcpp::Node
++{
++public:
++  PerceptionNode();
++
++private:
++  void lidarCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
++
++  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
++};
++
++}  // namespace dog_perception
+\ No newline at end of file
+diff --git a/src/dog_perception/package.xml b/src/dog_perception/package.xml
+new file mode 100644
+index 0000000..27c4f05
+--- /dev/null
++++ b/src/dog_perception/package.xml
+@@ -0,0 +1,23 @@
++<?xml version="1.0"?>
++<package format="3">
++  <name>dog_perception</name>
++  <version>0.0.1</version>
++  <description>Perception node skeleton for Dog project.</description>
++  <maintainer email="dev@example.com">dog</maintainer>
++  <license>Apache-2.0</license>
++
++  <buildtool_depend>ament_cmake</buildtool_depend>
++
++  <depend>rclcpp</depend>
++  <depend>sensor_msgs</depend>
++  <depend>vision_msgs</depend>
++  <depend>cv_bridge</depend>
++  <depend>geometry_msgs</depend>
++  <depend>dog_interfaces</depend>
++
++  <test_depend>ament_cmake_gtest</test_depend>
++
++  <export>
++    <build_type>ament_cmake</build_type>
++  </export>
++</package>
+\ No newline at end of file
+diff --git a/src/dog_perception/src/main.cpp b/src/dog_perception/src/main.cpp
+new file mode 100644
+index 0000000..7e1f9ea
+--- /dev/null
++++ b/src/dog_perception/src/main.cpp
+@@ -0,0 +1,10 @@
++#include "dog_perception/perception_node.hpp"
++
++int main(int argc, char ** argv)
++{
++  rclcpp::init(argc, argv);
++  auto node = std::make_shared<dog_perception::PerceptionNode>();
++  rclcpp::spin(node);
++  rclcpp::shutdown();
++  return 0;
++}
+\ No newline at end of file
+diff --git a/src/dog_perception/src/perception_node.cpp b/src/dog_perception/src/perception_node.cpp
+new file mode 100644
+index 0000000..d999bc2
+--- /dev/null
++++ b/src/dog_perception/src/perception_node.cpp
+@@ -0,0 +1,25 @@
++#include "dog_perception/perception_node.hpp"
++
++#include <functional>
++
++namespace dog_perception
++{
++
++PerceptionNode::PerceptionNode()
++: rclcpp::Node("dog_perception")
++{
++  lidar_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
++    "/lidar/points",
++    rclcpp::SensorDataQoS(),
++    std::bind(&PerceptionNode::lidarCallback, this, std::placeholders::_1));
++
++  RCLCPP_INFO(get_logger(), "dog_perception skeleton node initialized");
++}
++
++void PerceptionNode::lidarCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
++{
++  (void)msg;
++  RCLCPP_DEBUG(get_logger(), "Received lidar frame");
++}
++
++}  // namespace dog_perception
+\ No newline at end of file
+diff --git a/src/dog_perception/test/test_perception_node.cpp b/src/dog_perception/test/test_perception_node.cpp
+new file mode 100644
+index 0000000..3af705c
+--- /dev/null
++++ b/src/dog_perception/test/test_perception_node.cpp
+@@ -0,0 +1,11 @@
++#include "dog_perception/perception_node.hpp"
++
++#include <gtest/gtest.h>
++
++TEST(PerceptionNodeTest, NodeName)
++{
++  rclcpp::init(0, nullptr);
++  auto node = std::make_shared<dog_perception::PerceptionNode>();
++  EXPECT_STREQ(node->get_name(), "dog_perception");
++  rclcpp::shutdown();
++}
+\ No newline at end of file

@@ -1,0 +1,32 @@
+验证时间：2026-04-03（dev_story补跑恢复）
+工作目录：/home/phoenix/source/Dog
+
+1) 命令：colcon build --symlink-install --packages-select dog_perception dog_interfaces dog_behavior dog_lifecycle
+状态：成功（exit code 0）
+核心输出：
+- Finished <<< dog_interfaces [0.29s]
+- Finished <<< dog_behavior [0.10s]
+- Finished <<< dog_lifecycle [0.11s]
+- Finished <<< dog_perception [0.54s]
+- Summary: 4 packages finished [1.03s]
+
+2) 命令：colcon test --packages-select dog_perception
+状态：成功（exit code 0）
+核心输出：
+- Starting >>> dog_perception
+- Finished <<< dog_perception [0.20s]
+- Summary: 1 package finished [0.41s]
+
+3) 命令：colcon test-result --verbose
+状态：成功（exit code 0）
+核心输出：
+- Summary: 8 tests, 0 errors, 0 failures, 0 skipped
+
+4) TF检查（优先命令）
+命令：ros2 run tf2_tools view_frames
+状态：成功（exit code 0）
+核心输出：
+- [view_frames]: Listening to tf data for 5.0 second(s)...
+- [view_frames]: Generating graph in frames.pdf file...
+- Result: tf2_msgs.srv.FrameGraph_Response(frame_yaml='[]')
+说明：命令可执行，但本次采样窗口内未捕获到TF帧（frame_yaml为空）。

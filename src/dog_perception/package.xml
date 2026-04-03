@@ -13,9 +13,14 @@
   <depend>vision_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>yaml-cpp</depend>
   <depend>dog_interfaces</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>tf2_msgs</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
