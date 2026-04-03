@@ -1,0 +1,8 @@
+string behavior_name
+geometry_msgs/PoseStamped target_pose
+---
+bool accepted
+string detail
+---
+float32 progress
+string state

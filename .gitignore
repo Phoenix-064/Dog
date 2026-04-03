@@ -48,3 +48,13 @@ compile_commands.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# AI
+_bmad
+.claude
+
+# AI skills
+.github/skills/
+
+# Test artifacts
+test_detail.xml
