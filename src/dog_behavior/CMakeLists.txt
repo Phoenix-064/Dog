@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -21,6 +22,7 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
 )
 ament_target_dependencies(${PROJECT_NAME}_lib
   rclcpp
+  rclcpp_action
   nav_msgs
   geometry_msgs
   std_msgs
@@ -47,7 +49,14 @@ if(BUILD_TESTING)
   ament_add_gtest(test_behavior_node test/test_behavior_node.cpp)
   if(TARGET test_behavior_node)
     target_link_libraries(test_behavior_node ${PROJECT_NAME}_lib)
-    ament_target_dependencies(test_behavior_node rclcpp)
+    ament_target_dependencies(test_behavior_node
+      rclcpp
+      rclcpp_action
+      geometry_msgs
+      nav_msgs
+      std_msgs
+      dog_interfaces
+    )
   endif()
 endif()
 

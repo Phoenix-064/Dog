@@ -51,7 +51,7 @@ development_status:
   epic-1-retrospective: optional
   epic-2: in-progress
   2-1-实时全局本体位姿发布: in-progress
-  2-2-异步动作指令-action-发送与监听: backlog
+  2-2-异步动作指令-action-发送与监听: done
   epic-2-retrospective: optional
   epic-3: backlog
   3-1-异常重试拦截与优雅降级熔断网关: backlog

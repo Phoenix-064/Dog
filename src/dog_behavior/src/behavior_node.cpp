@@ -1,7 +1,9 @@
 #include "dog_behavior/behavior_node.hpp"
 
 #include <cmath>
+#include <chrono>
 #include <functional>
+#include <utility>
 
 namespace dog_behavior
 {
@@ -13,10 +15,39 @@ BehaviorNode::BehaviorNode()
 
 BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dog_behavior", options)
+, execution_state_(ExecutionState::kIdle)
+, action_server_ready_(false)
+, action_goal_pending_(false)
+, action_goal_active_(false)
+, has_latest_pose_(false)
 {
   const auto global_pose_topic = declare_parameter<std::string>("global_pose_topic", "/dog/global_pose");
   const auto localization_topic = declare_parameter<std::string>("localization_topic", "/localization/dog");
   default_frame_id_ = declare_parameter<std::string>("default_frame_id", "base_link");
+  execute_behavior_action_name_ = declare_parameter<std::string>(
+    "execute_behavior_action_name",
+    "/behavior/execute");
+  execute_behavior_trigger_topic_ = declare_parameter<std::string>(
+    "execute_behavior_trigger_topic",
+    "/behavior/execute_trigger");
+  action_server_wait_timeout_sec_ = declare_parameter<double>("action_server_wait_timeout_sec", 5.0);
+  feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 2.0);
+
+  if (action_server_wait_timeout_sec_ <= 0.0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid action_server_wait_timeout_sec=%.3f, fallback to 5.0s",
+      action_server_wait_timeout_sec_);
+    action_server_wait_timeout_sec_ = 5.0;
+  }
+
+  if (feedback_timeout_sec_ <= 0.0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid feedback_timeout_sec=%.3f, fallback to 2.0s",
+      feedback_timeout_sec_);
+    feedback_timeout_sec_ = 2.0;
+  }
 
   auto pose_qos = rclcpp::QoS(rclcpp::KeepLast(20));
   pose_qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
@@ -31,12 +62,37 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
     odom_qos,
     std::bind(&BehaviorNode::odomCallback, this, std::placeholders::_1));
 
+  execute_behavior_client_ = rclcpp_action::create_client<ExecuteBehavior>(
+    this,
+    execute_behavior_action_name_);
+
+  execute_trigger_sub_ = create_subscription<std_msgs::msg::String>(
+    execute_behavior_trigger_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    std::bind(&BehaviorNode::executeTriggerCallback, this, std::placeholders::_1));
+
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    execution_state_ = ExecutionState::kWaitingServer;
+    action_server_wait_start_time_ = now();
+  }
+
+  action_server_wait_timer_ = create_wall_timer(
+    std::chrono::milliseconds(200),
+    std::bind(&BehaviorNode::actionServerWaitTimerCallback, this));
+
+  feedback_watchdog_timer_ = create_wall_timer(
+    std::chrono::milliseconds(200),
+    std::bind(&BehaviorNode::feedbackWatchdogTimerCallback, this));
+
   RCLCPP_INFO(
     get_logger(),
-    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s",
+    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s",
     localization_topic.c_str(),
     global_pose_topic.c_str(),
-    default_frame_id_.c_str());
+    default_frame_id_.c_str(),
+    execute_behavior_action_name_.c_str(),
+    execute_behavior_trigger_topic_.c_str());
 }
 
 void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -89,7 +145,277 @@ void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr ms
     return;
   }
 
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    latest_pose_ = pose_msg;
+    has_latest_pose_ = true;
+  }
+
   global_pose_pub_->publish(pose_msg);
+}
+
+void BehaviorNode::executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  if (!triggerExecuteBehavior(msg->data)) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Failed to trigger execute behavior action from topic=%s behavior_name=%s",
+      execute_behavior_trigger_topic_.c_str(),
+      msg->data.c_str());
+  }
+}
+
+void BehaviorNode::actionServerWaitTimerCallback()
+{
+  if (execute_behavior_client_->wait_for_action_server(std::chrono::seconds(0))) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!action_server_ready_) {
+      action_server_ready_ = true;
+      execution_state_ = ExecutionState::kIdle;
+      RCLCPP_INFO(
+        get_logger(),
+        "Action server is ready: action_name=%s",
+        execute_behavior_action_name_.c_str());
+    }
+    action_server_wait_timer_.reset();
+    return;
+  }
+
+  const double elapsed_sec = (now() - action_server_wait_start_time_).seconds();
+  if (elapsed_sec >= action_server_wait_timeout_sec_) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!action_server_ready_) {
+      execution_state_ = ExecutionState::kServerUnavailable;
+      RCLCPP_ERROR(
+        get_logger(),
+        "Action server unavailable after timeout: action_name=%s timeout=%.2fs",
+        execute_behavior_action_name_.c_str(),
+        action_server_wait_timeout_sec_);
+    }
+    action_server_wait_timer_.reset();
+  }
+}
+
+void BehaviorNode::feedbackWatchdogTimerCallback()
+{
+  ExecuteBehaviorGoalHandle::SharedPtr goal_handle_to_cancel;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!action_goal_active_) {
+      return;
+    }
+
+    const double feedback_elapsed_sec = (now() - last_feedback_time_).seconds();
+    if (feedback_elapsed_sec <= feedback_timeout_sec_) {
+      return;
+    }
+
+    execution_state_ = ExecutionState::kTimeout;
+    action_goal_active_ = false;
+    action_goal_pending_ = false;
+    goal_handle_to_cancel = active_goal_handle_;
+    active_goal_handle_.reset();
+
+    RCLCPP_ERROR(
+      get_logger(),
+      "Action feedback timeout: action_name=%s timeout=%.2fs",
+      execute_behavior_action_name_.c_str(),
+      feedback_timeout_sec_);
+  }
+
+  if (goal_handle_to_cancel) {
+    execute_behavior_client_->async_cancel_goal(goal_handle_to_cancel);
+  }
+}
+
+bool BehaviorNode::triggerExecuteBehavior(const std::string & behavior_name)
+{
+  ExecuteBehavior::Goal goal;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!canSendGoalLocked()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Cannot send action goal in current state: state=%s",
+        executionStateToString(execution_state_).c_str());
+      return false;
+    }
+
+    if (!has_latest_pose_) {
+      RCLCPP_WARN(get_logger(), "Cannot send action goal because latest pose is unavailable");
+      return false;
+    }
+
+    goal.behavior_name = behavior_name;
+    goal.target_pose = latest_pose_;
+    execution_state_ = ExecutionState::kSendingGoal;
+    action_goal_pending_ = true;
+  }
+
+  rclcpp_action::Client<ExecuteBehavior>::SendGoalOptions send_goal_options;
+  send_goal_options.goal_response_callback =
+    [this](ExecuteBehaviorGoalHandle::SharedPtr goal_handle) {
+      this->goalResponseCallback(goal_handle);
+    };
+  send_goal_options.feedback_callback =
+    std::bind(&BehaviorNode::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+  send_goal_options.result_callback =
+    std::bind(&BehaviorNode::resultCallback, this, std::placeholders::_1);
+
+  execute_behavior_client_->async_send_goal(goal, send_goal_options);
+  RCLCPP_INFO(
+    get_logger(),
+    "Sent action goal: action_name=%s behavior_name=%s frame_id=%s",
+    execute_behavior_action_name_.c_str(),
+    goal.behavior_name.c_str(),
+    goal.target_pose.header.frame_id.c_str());
+  return true;
+}
+
+void BehaviorNode::goalResponseCallback(ExecuteBehaviorGoalHandle::SharedPtr goal_handle)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (!goal_handle) {
+    execution_state_ = ExecutionState::kRejected;
+    action_goal_pending_ = false;
+    action_goal_active_ = false;
+    RCLCPP_ERROR(get_logger(), "Action goal rejected: action_name=%s", execute_behavior_action_name_.c_str());
+    return;
+  }
+
+  active_goal_handle_ = goal_handle;
+  action_goal_pending_ = false;
+  action_goal_active_ = true;
+  last_feedback_time_ = now();
+  execution_state_ = ExecutionState::kRunning;
+  RCLCPP_INFO(get_logger(), "Action goal accepted: action_name=%s", execute_behavior_action_name_.c_str());
+}
+
+void BehaviorNode::feedbackCallback(
+  ExecuteBehaviorGoalHandle::SharedPtr,
+  const std::shared_ptr<const ExecuteBehavior::Feedback> feedback)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (!action_goal_active_) {
+    return;
+  }
+
+  last_feedback_time_ = now();
+  RCLCPP_INFO(
+    get_logger(),
+    "Action feedback received: progress=%.3f state=%s",
+    feedback->progress,
+    feedback->state.c_str());
+}
+
+void BehaviorNode::resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  const auto previous_state = execution_state_;
+  const bool timeout_terminal = (previous_state == ExecutionState::kTimeout);
+
+  action_goal_pending_ = false;
+  action_goal_active_ = false;
+  active_goal_handle_.reset();
+
+  const char * result_detail = (result.result && !result.result->detail.empty()) ?
+    result.result->detail.c_str() : "<empty>";
+
+  switch (result.code) {
+    case rclcpp_action::ResultCode::SUCCEEDED:
+      if (result.result && result.result->accepted) {
+        execution_state_ = ExecutionState::kSucceeded;
+        RCLCPP_INFO(
+          get_logger(),
+          "Action result succeeded: accepted=%s detail=%s",
+          result.result->accepted ? "true" : "false",
+          result.result->detail.c_str());
+      } else {
+        execution_state_ = ExecutionState::kFailed;
+        RCLCPP_ERROR(
+          get_logger(),
+          "Action result failed due to accepted=false: action_name=%s result_code=SUCCEEDED detail=%s",
+          execute_behavior_action_name_.c_str(),
+          result_detail);
+      }
+      break;
+    case rclcpp_action::ResultCode::ABORTED:
+      execution_state_ = ExecutionState::kFailed;
+      RCLCPP_ERROR(
+        get_logger(),
+        "Action result aborted: action_name=%s result_code=ABORTED detail=%s",
+        execute_behavior_action_name_.c_str(),
+        result_detail);
+      break;
+    case rclcpp_action::ResultCode::CANCELED:
+      if (timeout_terminal) {
+        execution_state_ = ExecutionState::kTimeout;
+      } else {
+        execution_state_ = ExecutionState::kFailed;
+      }
+      RCLCPP_ERROR(
+        get_logger(),
+        "Action result canceled: action_name=%s result_code=CANCELED detail=%s previous_state=%s",
+        execute_behavior_action_name_.c_str(),
+        result_detail,
+        executionStateToString(previous_state).c_str());
+      break;
+    default:
+      execution_state_ = ExecutionState::kFailed;
+      RCLCPP_ERROR(
+        get_logger(),
+        "Action result unknown code: action_name=%s result_code=%d detail=%s",
+        execute_behavior_action_name_.c_str(),
+        static_cast<int>(result.code),
+        result_detail);
+      break;
+  }
+}
+
+bool BehaviorNode::canSendGoalLocked() const
+{
+  if (!action_server_ready_) {
+    return false;
+  }
+  if (action_goal_pending_) {
+    return false;
+  }
+  if (action_goal_active_) {
+    return false;
+  }
+  return true;
+}
+
+std::string BehaviorNode::getExecutionState() const
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return executionStateToString(execution_state_);
+}
+
+std::string BehaviorNode::executionStateToString(ExecutionState state) const
+{
+  switch (state) {
+    case ExecutionState::kIdle:
+      return "idle";
+    case ExecutionState::kWaitingServer:
+      return "waiting_server";
+    case ExecutionState::kServerUnavailable:
+      return "server_unavailable";
+    case ExecutionState::kSendingGoal:
+      return "sending_goal";
+    case ExecutionState::kRunning:
+      return "running";
+    case ExecutionState::kSucceeded:
+      return "succeeded";
+    case ExecutionState::kFailed:
+      return "failed";
+    case ExecutionState::kRejected:
+      return "rejected";
+    case ExecutionState::kTimeout:
+      return "timeout";
+    default:
+      return "unknown";
+  }
 }
 
 bool BehaviorNode::isFinitePose(const geometry_msgs::msg::Pose & pose) const
