@@ -2,12 +2,15 @@
 
 #include "dog_lifecycle/state_store.hpp"
 
+#include <dog_interfaces/msg/target3_d.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -34,6 +37,11 @@ public:
   std::string GetLastRecoveryContextForTest() const;
   bool IsIdleSpinningForTest() const;
   std::string GetLastSystemModePayloadForTest() const;
+  bool IsReconnectPendingForTest() const;
+  bool IsReconnectTransitionCompletedForTest() const;
+  bool IsControlledDegradeModeForTest() const;
+  int64_t GetLastReconnectRecoveryLatencyMsForTest() const;
+  size_t GetRestartAttemptsInWindowForTest() const;
 
 private:
   enum class GraspFeedbackType
@@ -62,12 +70,22 @@ private:
   void graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void degradeAckCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void estopCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg);
+  void lifecycleTransitionStatusCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  bool isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const;
   GraspFeedbackEvent parseGraspFeedback(const std::string & payload, const rclcpp::Time & stamp) const;
   DegradeAckEvent parseDegradeAck(const std::string & payload) const;
   std::optional<bool> parseEstopActive(const std::string & payload) const;
   void processGraspFeedback(const GraspFeedbackEvent & event);
+  void heartbeatTimerCallback();
   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
   void publishDegradeCommand(const std::string & task_id, const char * reason);
+  void publishLifecycleTransition(
+    const char * from_state,
+    const char * to_state,
+    const char * reason,
+    uint32_t attempt);
+  void publishHealthAlarm(const char * reason, uint32_t attempts, int64_t since_last_valid_frame_ms);
   void publishRecoveryContext(
     const StateStoreLoadResult & load_result,
     int64_t load_cost_ms,
@@ -86,6 +104,12 @@ private:
   int64_t empty_grasp_threshold_{2};
   int64_t degrade_timeout_ms_{1000};
   int64_t breaker_reset_window_ms_{3000};
+  int64_t heartbeat_timeout_ms_{2000};
+  int64_t heartbeat_check_period_ms_{100};
+  int64_t reconnect_min_interval_ms_{500};
+  int64_t max_restart_attempts_{3};
+  int64_t restart_window_ms_{10000};
+  int64_t valid_frame_recovery_consecutive_{2};
 
   std::string grasp_feedback_topic_;
   std::string degrade_command_topic_;
@@ -93,6 +117,11 @@ private:
   std::string recovery_context_topic_;
   std::string estop_topic_;
   std::string system_mode_topic_;
+  std::string valid_frame_topic_;
+  std::string lifecycle_transition_topic_;
+  std::string lifecycle_transition_status_topic_;
+  std::string health_alarm_topic_;
+  std::string monitored_node_name_;
 
   mutable std::mutex breaker_mutex_;
   size_t consecutive_empty_count_{0U};
@@ -112,6 +141,21 @@ private:
   rclcpp::Time last_feedback_stamp_;
   std::string last_feedback_task_id_;
   GraspFeedbackType last_feedback_type_{GraspFeedbackType::kUnknown};
+  bool has_last_valid_frame_time_{false};
+  rclcpp::Time last_valid_frame_time_;
+  bool reconnect_pending_{false};
+  bool has_last_reconnect_trigger_time_{false};
+  rclcpp::Time last_reconnect_trigger_time_;
+  rclcpp::Time last_reconnect_start_time_;
+  int64_t last_reconnect_recovery_latency_ms_{-1};
+  size_t reconnect_valid_frame_consecutive_{0U};
+  bool reconnect_transition_inactive_confirmed_{false};
+  bool reconnect_transition_active_confirmed_{false};
+  uint32_t reconnect_transition_attempt_{0U};
+  bool has_last_transition_verified_time_{false};
+  rclcpp::Time last_transition_verified_time_;
+  bool controlled_degrade_mode_{false};
+  std::deque<rclcpp::Time> restart_attempt_timestamps_;
 
   mutable std::mutex recovery_context_mutex_;
   std::string last_recovery_context_payload_;
@@ -121,10 +165,15 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr grasp_feedback_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr degrade_ack_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr estop_sub_;
+  rclcpp::Subscription<dog_interfaces::msg::Target3D>::SharedPtr valid_frame_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_transition_status_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr system_mode_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_transition_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr health_alarm_pub_;
   rclcpp::TimerBase::SharedPtr degrade_timeout_timer_;
+  rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 };
 
 }  // namespace dog_lifecycle

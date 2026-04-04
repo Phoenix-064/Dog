@@ -1,5 +1,7 @@
 #include "dog_lifecycle/lifecycle_node.hpp"
 
+#include <dog_interfaces/msg/target3_d.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -7,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <std_msgs/msg/string.hpp>
 #include <gtest/gtest.h>
@@ -53,6 +56,18 @@ std::string extractPayloadValue(const std::string & payload, const std::string &
     return payload.substr(value_begin);
   }
   return payload.substr(value_begin, value_end - value_begin);
+}
+
+dog_interfaces::msg::Target3D makeValidFrame(const rclcpp::Node::SharedPtr & node)
+{
+  dog_interfaces::msg::Target3D frame;
+  frame.header.stamp = node->now();
+  frame.target_id = "target_1";
+  frame.position.x = 0.1;
+  frame.position.y = 0.2;
+  frame.position.z = 0.3;
+  frame.confidence = 0.9F;
+  return frame;
 }
 
 }  // namespace
@@ -281,6 +296,281 @@ TEST_F(LifecycleNodeTest, EstopSwitchesIdleSpinningModeAndRecoversToNormal)
   executor.remove_node(io_node);
   executor.remove_node(lifecycle_node);
   (void)mode_sub;
+}
+
+TEST_F(LifecycleNodeTest, HeartbeatTimeoutTriggersLifecycleReconnect)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_timeout";
+  const std::string transition_topic = "/test/lifecycle/transition_timeout";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 60);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 500);
+  options.append_parameter_override("max_restart_attempts", 3);
+  options.append_parameter_override("restart_window_ms", 500);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_timeout_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+
+  std::vector<std::string> transitions;
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&transitions](const std_msgs::msg::String::ConstSharedPtr msg) {
+      transitions.push_back(msg->data);
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(30));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+    return transitions.size() >= 2U;
+  }));
+
+  EXPECT_TRUE(lifecycle_node->IsReconnectPendingForTest());
+  EXPECT_NE(transitions[0].find("from=active"), std::string::npos);
+  EXPECT_NE(transitions[0].find("to=inactive"), std::string::npos);
+  EXPECT_NE(transitions[1].find("from=inactive"), std::string::npos);
+  EXPECT_NE(transitions[1].find("to=active"), std::string::npos);
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)transition_sub;
+}
+
+TEST_F(LifecycleNodeTest, ValidFrameLatchMarksReconnectRecoveredWithinTwoSeconds)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_recover";
+  const std::string transition_topic = "/test/lifecycle/transition_recover";
+  const std::string transition_status_topic = "/test/lifecycle/transition_status_recover";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("lifecycle_transition_status_topic", transition_status_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 60);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 500);
+  options.append_parameter_override("max_restart_attempts", 3);
+  options.append_parameter_override("restart_window_ms", 500);
+  options.append_parameter_override("valid_frame_recovery_consecutive", 1);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_recover_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+  auto transition_status_pub = io_node->create_publisher<std_msgs::msg::String>(
+    transition_status_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+  std::vector<std::string> transitions;
+
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&transitions](const std_msgs::msg::String::ConstSharedPtr msg) {
+      transitions.push_back(msg->data);
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u;
+  }));
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(transition_status_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+    return lifecycle_node->IsReconnectPendingForTest();
+  }));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return transitions.size() >= 2U;
+  }));
+
+  const auto emitted_attempt = extractPayloadValue(transitions.back(), "attempt");
+  ASSERT_FALSE(emitted_attempt.empty());
+
+  auto valid_frame_recovery_1 = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame_recovery_1);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  EXPECT_TRUE(lifecycle_node->IsReconnectPendingForTest());
+  EXPECT_FALSE(lifecycle_node->IsReconnectTransitionCompletedForTest());
+
+  std_msgs::msg::String inactive_ack;
+  inactive_ack.data =
+    "node=dog_perception;from=active;to=inactive;status=ok;attempt=" + emitted_attempt;
+  transition_status_pub->publish(inactive_ack);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  std_msgs::msg::String active_ack;
+  active_ack.data =
+    "node=dog_perception;from=inactive;to=active;status=ok;attempt=" + emitted_attempt;
+  transition_status_pub->publish(active_ack);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  EXPECT_TRUE(lifecycle_node->IsReconnectTransitionCompletedForTest());
+
+  auto valid_frame_recovery_2 = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame_recovery_2);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+    return !lifecycle_node->IsReconnectPendingForTest() &&
+           lifecycle_node->GetLastReconnectRecoveryLatencyMsForTest() >= 0;
+  }));
+
+  EXPECT_LT(lifecycle_node->GetLastReconnectRecoveryLatencyMsForTest(), 2000);
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)transition_sub;
+}
+
+TEST_F(LifecycleNodeTest, RestartLimitTriggersControlledDegradeAndAlarm)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_degrade";
+  const std::string transition_topic = "/test/lifecycle/transition_degrade";
+  const std::string alarm_topic = "/test/lifecycle/alarm_degrade";
+  const std::string system_mode_topic = "/test/lifecycle/system_mode_degrade";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("health_alarm_topic", alarm_topic);
+  options.append_parameter_override("system_mode_topic", system_mode_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 40);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 20);
+  options.append_parameter_override("max_restart_attempts", 1);
+  options.append_parameter_override("restart_window_ms", 300);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_degrade_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+
+  std::string alarm_payload;
+  auto alarm_sub = io_node->create_subscription<std_msgs::msg::String>(
+    alarm_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&alarm_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
+      alarm_payload = msg->data;
+    });
+
+  std::string mode_payload;
+  auto mode_sub = io_node->create_subscription<std_msgs::msg::String>(
+    system_mode_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&mode_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
+      mode_payload = msg->data;
+    });
+
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [](const std_msgs::msg::String::ConstSharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1200), [&]() {
+    return lifecycle_node->IsControlledDegradeModeForTest() && !alarm_payload.empty();
+  }));
+
+  EXPECT_NE(alarm_payload.find("type=heartbeat_restart_limit"), std::string::npos);
+  EXPECT_NE(mode_payload.find("mode=degraded"), std::string::npos);
+  EXPECT_FALSE(lifecycle_node->IsReconnectPendingForTest());
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)alarm_sub;
+  (void)mode_sub;
+  (void)transition_sub;
+}
+
+TEST_F(LifecycleNodeTest, MaxRestartAttemptsBoundaryAllowsAttemptAtEquality)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_boundary";
+  const std::string transition_topic = "/test/lifecycle/transition_boundary";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 40);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 200);
+  options.append_parameter_override("max_restart_attempts", 1);
+  options.append_parameter_override("restart_window_ms", 1000);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_boundary_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+
+  std::vector<std::string> transitions;
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&transitions](const std_msgs::msg::String::ConstSharedPtr msg) {
+      transitions.push_back(msg->data);
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+    return transitions.size() >= 2U;
+  }));
+
+  EXPECT_EQ(lifecycle_node->GetRestartAttemptsInWindowForTest(), 1U);
+  EXPECT_FALSE(lifecycle_node->IsControlledDegradeModeForTest());
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)transition_sub;
 }
 
 TEST_F(LifecycleNodeTest, StartupPublishesRecoveredContextFromValidState)

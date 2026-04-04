@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <sstream>
@@ -62,6 +63,12 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
   degrade_timeout_ms_ = declare_parameter<int64_t>("degrade_timeout_ms", 800);
   breaker_reset_window_ms_ = declare_parameter<int64_t>("breaker_reset_window_ms", 3000);
   feedback_dedup_window_ms_ = declare_parameter<int64_t>("feedback_dedup_window_ms", 10);
+  heartbeat_timeout_ms_ = declare_parameter<int64_t>("heartbeat_timeout_ms", 2000);
+  heartbeat_check_period_ms_ = declare_parameter<int64_t>("heartbeat_check_period_ms", 100);
+  reconnect_min_interval_ms_ = declare_parameter<int64_t>("reconnect_min_interval_ms", 500);
+  max_restart_attempts_ = declare_parameter<int64_t>("max_restart_attempts", 3);
+  restart_window_ms_ = declare_parameter<int64_t>("restart_window_ms", 10000);
+  valid_frame_recovery_consecutive_ = declare_parameter<int64_t>("valid_frame_recovery_consecutive", 2);
   grasp_feedback_topic_ = declare_parameter<std::string>("grasp_feedback_topic", "/behavior/grasp_feedback");
   degrade_command_topic_ = declare_parameter<std::string>("degrade_command_topic", "/lifecycle/degrade_command");
   degrade_ack_topic_ = declare_parameter<std::string>("degrade_ack_topic", "/lifecycle/degrade_ack");
@@ -69,6 +76,13 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     "recovery_context_topic", "/lifecycle/recovery_context");
   estop_topic_ = declare_parameter<std::string>("estop_topic", "/system/estop");
   system_mode_topic_ = declare_parameter<std::string>("system_mode_topic", "/lifecycle/system_mode");
+  valid_frame_topic_ = declare_parameter<std::string>("valid_frame_topic", "/perception/target3d");
+  lifecycle_transition_topic_ = declare_parameter<std::string>(
+    "lifecycle_transition_topic", "/lifecycle/transition_command");
+  lifecycle_transition_status_topic_ = declare_parameter<std::string>(
+    "lifecycle_transition_status_topic", "/lifecycle/transition_status");
+  health_alarm_topic_ = declare_parameter<std::string>("health_alarm_topic", "/lifecycle/health_alarm");
+  monitored_node_name_ = declare_parameter<std::string>("monitored_node_name", "dog_perception");
 
   int64_t validated_max_write_bytes = max_write_bytes;
   if (validated_max_write_bytes <= 0) {
@@ -131,6 +145,54 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     feedback_dedup_window_ms_ = 10;
   }
 
+  if (heartbeat_timeout_ms_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid heartbeat_timeout_ms=%ld, fallback to 2000",
+      heartbeat_timeout_ms_);
+    heartbeat_timeout_ms_ = 2000;
+  }
+
+  if (heartbeat_check_period_ms_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid heartbeat_check_period_ms=%ld, fallback to 100",
+      heartbeat_check_period_ms_);
+    heartbeat_check_period_ms_ = 100;
+  }
+
+  if (reconnect_min_interval_ms_ < 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid reconnect_min_interval_ms=%ld, fallback to 500",
+      reconnect_min_interval_ms_);
+    reconnect_min_interval_ms_ = 500;
+  }
+
+  if (max_restart_attempts_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid max_restart_attempts=%ld, fallback to 3",
+      max_restart_attempts_);
+    max_restart_attempts_ = 3;
+  }
+
+  if (restart_window_ms_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid restart_window_ms=%ld, fallback to 10000",
+      restart_window_ms_);
+    restart_window_ms_ = 10000;
+  }
+
+  if (valid_frame_recovery_consecutive_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "invalid valid_frame_recovery_consecutive=%ld, fallback to 2",
+      valid_frame_recovery_consecutive_);
+    valid_frame_recovery_consecutive_ = 2;
+  }
+
   StateStoreConfig config;
   config.state_file_path = state_file_path;
   config.backup_file_path = backup_file_path;
@@ -150,6 +212,12 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     rclcpp::QoS(rclcpp::KeepLast(1))
     .reliability(rclcpp::ReliabilityPolicy::Reliable)
     .durability(rclcpp::DurabilityPolicy::TransientLocal));
+  lifecycle_transition_pub_ = create_publisher<std_msgs::msg::String>(
+    lifecycle_transition_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+  health_alarm_pub_ = create_publisher<std_msgs::msg::String>(
+    health_alarm_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
 
   const auto load_start = std::chrono::steady_clock::now();
   const auto load_result = state_store_->Load();
@@ -192,6 +260,23 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     estop_topic_,
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
     std::bind(&LifecycleNode::estopCallback, this, std::placeholders::_1));
+  valid_frame_sub_ = create_subscription<dog_interfaces::msg::Target3D>(
+    valid_frame_topic_,
+    rclcpp::SensorDataQoS(),
+    std::bind(&LifecycleNode::validFrameCallback, this, std::placeholders::_1));
+  lifecycle_transition_status_sub_ = create_subscription<std_msgs::msg::String>(
+    lifecycle_transition_status_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    std::bind(&LifecycleNode::lifecycleTransitionStatusCallback, this, std::placeholders::_1));
+  heartbeat_timer_ = create_wall_timer(
+    std::chrono::milliseconds(heartbeat_check_period_ms_),
+    std::bind(&LifecycleNode::heartbeatTimerCallback, this));
+
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    has_last_valid_frame_time_ = true;
+    last_valid_frame_time_ = now();
+  }
 
   publishSystemMode("normal", "startup_default");
 
@@ -206,6 +291,19 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     degrade_timeout_ms_,
     breaker_reset_window_ms_,
     feedback_dedup_window_ms_);
+
+  RCLCPP_INFO(
+    get_logger(),
+    "heartbeat_guard initialized, valid_frame_topic=%s, transition_topic=%s, alarm_topic=%s, monitored_node=%s, timeout_ms=%ld, check_period_ms=%ld, min_interval_ms=%ld, max_restart_attempts=%ld, restart_window_ms=%ld",
+    valid_frame_topic_.c_str(),
+    lifecycle_transition_topic_.c_str(),
+    health_alarm_topic_.c_str(),
+    monitored_node_name_.c_str(),
+    heartbeat_timeout_ms_,
+    heartbeat_check_period_ms_,
+    reconnect_min_interval_ms_,
+    max_restart_attempts_,
+    restart_window_ms_);
 }
 
 LifecycleNode::~LifecycleNode()
@@ -318,6 +416,36 @@ std::string LifecycleNode::GetLastSystemModePayloadForTest() const
   return last_system_mode_payload_;
 }
 
+bool LifecycleNode::IsReconnectPendingForTest() const
+{
+  std::lock_guard<std::mutex> lock(breaker_mutex_);
+  return reconnect_pending_;
+}
+
+bool LifecycleNode::IsReconnectTransitionCompletedForTest() const
+{
+  std::lock_guard<std::mutex> lock(breaker_mutex_);
+  return reconnect_transition_inactive_confirmed_ && reconnect_transition_active_confirmed_;
+}
+
+bool LifecycleNode::IsControlledDegradeModeForTest() const
+{
+  std::lock_guard<std::mutex> lock(breaker_mutex_);
+  return controlled_degrade_mode_;
+}
+
+int64_t LifecycleNode::GetLastReconnectRecoveryLatencyMsForTest() const
+{
+  std::lock_guard<std::mutex> lock(breaker_mutex_);
+  return last_reconnect_recovery_latency_ms_;
+}
+
+size_t LifecycleNode::GetRestartAttemptsInWindowForTest() const
+{
+  std::lock_guard<std::mutex> lock(breaker_mutex_);
+  return restart_attempt_timestamps_.size();
+}
+
 void LifecycleNode::graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg)
 {
   const auto event = parseGraspFeedback(msg->data, now());
@@ -371,6 +499,17 @@ void LifecycleNode::estopCallback(const std_msgs::msg::String::ConstSharedPtr ms
 {
   if (!msg) {
     return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    if (controlled_degrade_mode_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "ignore estop mode switch while controlled degrade is active, payload=%s",
+        msg->data.c_str());
+      return;
+    }
   }
 
   const auto estop_active = parseEstopActive(msg->data);
@@ -621,6 +760,197 @@ void LifecycleNode::processGraspFeedback(const GraspFeedbackEvent & event)
   }
 }
 
+void LifecycleNode::validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg)
+{
+  if (!isValidFrameMessage(msg)) {
+    return;
+  }
+
+  int64_t recovery_latency_ms = -1;
+  bool recovered_from_reconnect = false;
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    const auto now_time = now();
+    has_last_valid_frame_time_ = true;
+    last_valid_frame_time_ = now_time;
+
+    if (reconnect_pending_) {
+      if (!(reconnect_transition_inactive_confirmed_ && reconnect_transition_active_confirmed_)) {
+        return;
+      }
+      ++reconnect_valid_frame_consecutive_;
+      if (reconnect_valid_frame_consecutive_ < static_cast<size_t>(valid_frame_recovery_consecutive_)) {
+        return;
+      }
+      recovery_latency_ms = (now_time - last_reconnect_start_time_).nanoseconds() / 1000000;
+      last_reconnect_recovery_latency_ms_ = recovery_latency_ms;
+      reconnect_pending_ = false;
+      reconnect_valid_frame_consecutive_ = 0U;
+      recovered_from_reconnect = true;
+    }
+  }
+
+  if (recovered_from_reconnect) {
+    RCLCPP_INFO(
+      get_logger(),
+      "heartbeat_reconnect_recovered node=%s latency_ms=%ld requirement_lt_ms=2000",
+      monitored_node_name_.c_str(),
+      recovery_latency_ms);
+  }
+}
+
+void LifecycleNode::lifecycleTransitionStatusCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  if (!msg) {
+    return;
+  }
+
+  const auto status = parseKeyValuePayload(msg->data, "status");
+  if (
+    status != "ok" && status != "success" && status != "succeeded" &&
+    status != "done" && status != "completed")
+  {
+    return;
+  }
+
+  const auto node_name = parseKeyValuePayload(msg->data, "node");
+  if (!node_name.empty() && node_name != normalizeToken(monitored_node_name_)) {
+    return;
+  }
+
+  const auto from_state = parseKeyValuePayload(msg->data, "from");
+  const auto to_state = parseKeyValuePayload(msg->data, "to");
+  if (from_state.empty() || to_state.empty()) {
+    return;
+  }
+
+  const auto attempt_value = parseKeyValuePayload(msg->data, "attempt");
+  if (attempt_value.empty()) {
+    return;
+  }
+
+  uint32_t attempt = 0U;
+  try {
+    attempt = static_cast<uint32_t>(std::stoul(attempt_value));
+  } catch (const std::exception &) {
+    return;
+  }
+
+  bool transition_completed = false;
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    if (!reconnect_pending_ || attempt != reconnect_transition_attempt_) {
+      return;
+    }
+
+    if (from_state == "active" && to_state == "inactive") {
+      reconnect_transition_inactive_confirmed_ = true;
+    } else if (from_state == "inactive" && to_state == "active") {
+      if (!reconnect_transition_inactive_confirmed_) {
+        return;
+      }
+      reconnect_transition_active_confirmed_ = true;
+    } else {
+      return;
+    }
+
+    transition_completed = reconnect_transition_inactive_confirmed_ && reconnect_transition_active_confirmed_;
+    if (transition_completed) {
+      has_last_transition_verified_time_ = true;
+      last_transition_verified_time_ = now();
+    }
+  }
+
+  if (transition_completed) {
+    RCLCPP_INFO(
+      get_logger(),
+      "heartbeat_transition_verified node=%s attempt=%u",
+      monitored_node_name_.c_str(),
+      attempt);
+  }
+}
+
+void LifecycleNode::heartbeatTimerCallback()
+{
+  const auto now_time = now();
+
+  bool should_trigger_reconnect = false;
+  bool should_enter_degrade = false;
+  uint32_t attempts = 0U;
+  int64_t since_last_valid_frame_ms = -1;
+
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    if (controlled_degrade_mode_ || !has_last_valid_frame_time_) {
+      return;
+    }
+
+    since_last_valid_frame_ms = (now_time - last_valid_frame_time_).nanoseconds() / 1000000;
+    if (since_last_valid_frame_ms <= heartbeat_timeout_ms_) {
+      return;
+    }
+
+    if (has_last_reconnect_trigger_time_) {
+      const auto elapsed_since_last_reconnect_ms =
+        (now_time - last_reconnect_trigger_time_).nanoseconds() / 1000000;
+      if (elapsed_since_last_reconnect_ms < reconnect_min_interval_ms_) {
+        return;
+      }
+    }
+
+    while (!restart_attempt_timestamps_.empty()) {
+      const auto elapsed_in_window_ms =
+        (now_time - restart_attempt_timestamps_.front()).nanoseconds() / 1000000;
+      if (elapsed_in_window_ms <= restart_window_ms_) {
+        break;
+      }
+      restart_attempt_timestamps_.pop_front();
+    }
+
+    restart_attempt_timestamps_.push_back(now_time);
+    attempts = static_cast<uint32_t>(restart_attempt_timestamps_.size());
+    has_last_reconnect_trigger_time_ = true;
+    last_reconnect_trigger_time_ = now_time;
+
+    if (attempts > static_cast<uint32_t>(max_restart_attempts_)) {
+      reconnect_pending_ = false;
+      reconnect_valid_frame_consecutive_ = 0U;
+      reconnect_transition_inactive_confirmed_ = false;
+      reconnect_transition_active_confirmed_ = false;
+      reconnect_transition_attempt_ = 0U;
+      controlled_degrade_mode_ = true;
+      should_enter_degrade = true;
+    } else {
+      reconnect_pending_ = true;
+      reconnect_valid_frame_consecutive_ = 0U;
+      reconnect_transition_inactive_confirmed_ = false;
+      reconnect_transition_active_confirmed_ = false;
+      reconnect_transition_attempt_ = attempts;
+      last_reconnect_start_time_ = now_time;
+      should_trigger_reconnect = true;
+    }
+  }
+
+  if (should_enter_degrade) {
+    publishHealthAlarm("heartbeat_restart_limit_exceeded", attempts, since_last_valid_frame_ms);
+    publishSystemMode("degraded", "heartbeat_restart_limit_exceeded");
+    return;
+  }
+
+  if (!should_trigger_reconnect) {
+    return;
+  }
+
+  publishLifecycleTransition("active", "inactive", "heartbeat_timeout", attempts);
+  publishLifecycleTransition("inactive", "active", "heartbeat_timeout", attempts);
+  RCLCPP_WARN(
+    get_logger(),
+    "heartbeat_timeout_reconnect_triggered node=%s since_last_valid_frame_ms=%ld attempt=%u",
+    monitored_node_name_.c_str(),
+    since_last_valid_frame_ms,
+    attempts);
+}
+
 void LifecycleNode::resetBreakerIfWindowElapsed(const rclcpp::Time & now)
 {
   if (!has_last_empty_time_ || breaker_reset_window_ms_ <= 0) {
@@ -774,6 +1104,92 @@ void LifecycleNode::publishSystemMode(const std::string & mode, const char * rea
     mode.c_str(),
     reason,
     mode_message.data.c_str());
+}
+
+void LifecycleNode::publishLifecycleTransition(
+  const char * from_state,
+  const char * to_state,
+  const char * reason,
+  uint32_t attempt)
+{
+  std_msgs::msg::String transition_message;
+  transition_message.data =
+    "node=" + monitored_node_name_ +
+    ";from=" + std::string(from_state) +
+    ";to=" + std::string(to_state) +
+    ";reason=" + std::string(reason) +
+    ";attempt=" + std::to_string(attempt);
+
+  lifecycle_transition_pub_->publish(transition_message);
+  RCLCPP_WARN(
+    get_logger(),
+    "lifecycle_transition_issued node=%s from=%s to=%s reason=%s attempt=%u",
+    monitored_node_name_.c_str(),
+    from_state,
+    to_state,
+    reason,
+    attempt);
+}
+
+void LifecycleNode::publishHealthAlarm(
+  const char * reason,
+  uint32_t attempts,
+  int64_t since_last_valid_frame_ms)
+{
+  int64_t last_valid_frame_unix_ms = -1;
+  {
+    std::lock_guard<std::mutex> lock(breaker_mutex_);
+    if (has_last_valid_frame_time_) {
+      last_valid_frame_unix_ms = last_valid_frame_time_.nanoseconds() / 1000000;
+    }
+  }
+
+  std_msgs::msg::String alarm_message;
+  alarm_message.data =
+    "type=heartbeat_restart_limit"
+    ";reason=" + std::string(reason) +
+    ";node=" + monitored_node_name_ +
+    ";attempts=" + std::to_string(attempts) +
+    ";max_attempts=" + std::to_string(max_restart_attempts_) +
+    ";restart_window_ms=" + std::to_string(restart_window_ms_) +
+    ";last_valid_frame_unix_ms=" + std::to_string(last_valid_frame_unix_ms) +
+    ";since_last_valid_frame_ms=" + std::to_string(since_last_valid_frame_ms);
+
+  health_alarm_pub_->publish(alarm_message);
+  RCLCPP_ERROR(
+    get_logger(),
+    "heartbeat_controlled_degrade reason=%s node=%s attempts=%u max_attempts=%ld restart_window_ms=%ld since_last_valid_frame_ms=%ld",
+    reason,
+    monitored_node_name_.c_str(),
+    attempts,
+    max_restart_attempts_,
+    restart_window_ms_,
+    since_last_valid_frame_ms);
+}
+
+bool LifecycleNode::isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const
+{
+  if (!msg) {
+    return false;
+  }
+
+  if (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0) {
+    return false;
+  }
+
+  if (
+    !std::isfinite(msg->position.x) ||
+    !std::isfinite(msg->position.y) ||
+    !std::isfinite(msg->position.z))
+  {
+    return false;
+  }
+
+  if (!std::isfinite(msg->confidence) || msg->confidence <= 0.0F) {
+    return false;
+  }
+
+  return true;
 }
 
 const char * LifecycleNode::feedbackTypeToString(GraspFeedbackType type)

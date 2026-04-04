@@ -8,3 +8,14 @@ dog_lifecycle:
       state_version: 1
     estop_topic: /system/estop
     system_mode_topic: /lifecycle/system_mode
+    valid_frame_topic: /perception/target3d
+    lifecycle_transition_topic: /lifecycle/transition_command
+    lifecycle_transition_status_topic: /lifecycle/transition_status
+    health_alarm_topic: /lifecycle/health_alarm
+    monitored_node_name: dog_perception
+    heartbeat_timeout_ms: 2000
+    heartbeat_check_period_ms: 100
+    reconnect_min_interval_ms: 500
+    max_restart_attempts: 3
+    restart_window_ms: 10000
+    valid_frame_recovery_consecutive: 2

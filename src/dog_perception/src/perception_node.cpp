@@ -591,7 +591,7 @@ void PerceptionNode::lifecycleModeCallback(const std_msgs::msg::String::ConstSha
     mode_token.begin(), mode_token.end(), mode_token.begin(),
     [](unsigned char c) {return static_cast<char>(std::tolower(c));});
 
-  if (mode_token != "idle_spinning" && mode_token != "normal") {
+  if (mode_token != "idle_spinning" && mode_token != "normal" && mode_token != "degraded") {
     RCLCPP_WARN_THROTTLE(
       get_logger(),
       *get_clock(),
@@ -602,7 +602,7 @@ void PerceptionNode::lifecycleModeCallback(const std_msgs::msg::String::ConstSha
     return;
   }
 
-  const bool to_idle_spinning = (mode_token == "idle_spinning");
+  const bool to_idle_spinning = (mode_token == "idle_spinning" || mode_token == "degraded");
   if (to_idle_spinning == idle_spinning_mode_) {
     return;
   }

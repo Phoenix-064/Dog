@@ -284,7 +284,7 @@ void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPt
     return;
   }
 
-  const bool is_idle_spinning = (mode == "idle_spinning");
+  const bool is_idle_spinning = (mode == "idle_spinning" || mode == "degraded");
   ExecuteBehaviorGoalHandle::SharedPtr goal_handle_to_cancel;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);

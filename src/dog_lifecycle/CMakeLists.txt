@@ -50,7 +50,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_lifecycle_node test/test_lifecycle_node.cpp)
   if(TARGET test_lifecycle_node)
     target_link_libraries(test_lifecycle_node ${PROJECT_NAME}_lib)
-    ament_target_dependencies(test_lifecycle_node rclcpp)
+    ament_target_dependencies(test_lifecycle_node rclcpp std_msgs dog_interfaces)
   endif()
 
   ament_add_gtest(test_yaml_state_store test/test_yaml_state_store.cpp)
