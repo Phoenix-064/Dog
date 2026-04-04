@@ -53,8 +53,8 @@ development_status:
   2-1-实时全局本体位姿发布: in-progress
   2-2-异步动作指令-action-发送与监听: done
   epic-2-retrospective: optional
-  epic-3: backlog
-  3-1-异常重试拦截与优雅降级熔断网关: backlog
+  epic-3: in-progress
+  3-1-异常重试拦截与优雅降级熔断网关: done
   epic-3-retrospective: optional
   epic-4: backlog
   4-1-感知算法动态工厂与热插拔注入: backlog
