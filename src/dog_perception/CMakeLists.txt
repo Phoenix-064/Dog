@@ -19,9 +19,14 @@ find_package(dog_interfaces REQUIRED)
 find_package(Boost REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-add_library(${PROJECT_NAME}_lib
+file(GLOB DOG_PERCEPTION_DETECTOR_SOURCES CONFIGURE_DEPENDS
+  src/detectors/*.cpp
+)
+
+add_library(${PROJECT_NAME}_lib SHARED
   src/perception_node.cpp
   src/digit_recognizer_factory.cpp
+  ${DOG_PERCEPTION_DETECTOR_SOURCES}
   src/target_3d_solver_factory.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
@@ -68,6 +73,12 @@ if(BUILD_TESTING)
   if(TARGET test_perception_node)
     target_link_libraries(test_perception_node ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_perception_node rclcpp tf2_msgs)
+  endif()
+
+  ament_add_gtest(test_digit_recognizer_factory test/test_digit_recognizer_factory.cpp)
+  if(TARGET test_digit_recognizer_factory)
+    target_link_libraries(test_digit_recognizer_factory ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_digit_recognizer_factory rclcpp)
   endif()
 endif()
 

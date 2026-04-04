@@ -1,5 +1,5 @@
 # generated: 2026-04-02
-# last_updated: 2026-04-03
+# last_updated: 2026-04-04
 # project: Dog
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-02
-last_updated: 2026-04-03
+last_updated: 2026-04-04
 project: Dog
 project_key: NOKEY
 tracking_system: file-system
@@ -56,11 +56,11 @@ development_status:
   epic-3: in-progress
   3-1-异常重试拦截与优雅降级熔断网关: done
   epic-3-retrospective: optional
-  epic-4: backlog
-  4-1-感知算法动态工厂与热插拔注入: backlog
+  epic-4: in-progress
+  4-1-感知算法动态工厂与热插拔注入: done
   epic-4-retrospective: optional
-  epic-5: backlog
-  5-1-yaml-断电进度恢复读取与重启重建: backlog
+  epic-5: in-progress
+  5-1-yaml-断电进度恢复读取与重启重建: ready-for-dev
   5-2-单侧丢帧先验外推补偿与急停空转: backlog
   5-3-节点假死心跳健康守护重联: backlog
   epic-5-retrospective: optional

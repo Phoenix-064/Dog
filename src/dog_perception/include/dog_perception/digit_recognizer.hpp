@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <functional>
 
 namespace dog_perception
 {
@@ -41,6 +42,16 @@ public:
 
   virtual DigitRecognitionResult infer(const ImageView & view) = 0;
 };
+
+using DigitRecognizerCreator = std::function<std::unique_ptr<IDigitRecognizer>(
+    const DigitRecognizerParams &, const rclcpp::Logger &)>;
+
+bool registerDigitRecognizer(
+  const std::string & recognizer_type,
+  DigitRecognizerCreator creator);
+
+bool registerHeuristicDigitRecognizer();
+bool registerMeanIntensityDigitRecognizer();
 
 class DigitRecognizerFactory
 {

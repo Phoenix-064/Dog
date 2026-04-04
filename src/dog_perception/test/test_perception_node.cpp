@@ -11,6 +11,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
+#include <regex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -101,7 +102,8 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   int frame_cache_size = 8,
   const std::string & qos_reliability = "best_effort",
   int stale_timeout_ms = 50,
-  int digit_temporal_confirm_count = 2)
+  int digit_temporal_confirm_count = 2,
+  const std::string & digit_recognizer_type = "heuristic")
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("extrinsics_yaml_path", yaml_path);
@@ -121,6 +123,7 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("digit_glare_brightness_threshold", 245.0);
   options.append_parameter_override("digit_glare_ratio_threshold", 0.35);
   options.append_parameter_override("qos_reliability", qos_reliability);
+  options.append_parameter_override("digit_recognizer_type", digit_recognizer_type);
   options.append_parameter_override("solver_type", "mock_minimal");
   return std::make_shared<dog_perception::PerceptionNode>(options);
 }
@@ -429,6 +432,69 @@ TEST_F(PerceptionNodeTest, GlareFrameIsSuppressedToNoFeature)
   spinFor(executor, std::chrono::milliseconds(160));
 
   EXPECT_EQ(received_target_id, "no_feature");
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)digit_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, DetectorTypeSwitchKeepsOutputContract)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/detector_switch";
+  const std::string cloud_topic = "/test/cloud/detector_switch";
+  const std::string target_topic = "/test/target/detector_switch";
+  const std::string digit_topic = "/test/digit/detector_switch";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    digit_topic,
+    8,
+    "best_effort",
+    50,
+    1,
+    "mean_intensity");
+  auto io_node = std::make_shared<rclcpp::Node>("io_detector_switch");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  bool received = false;
+  std::string received_target_id;
+  std::string received_frame_id;
+  float received_confidence = -1.0F;
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+    digit_topic,
+    rclcpp::SensorDataQoS(),
+    [&received, &received_target_id, &received_frame_id,
+      &received_confidence](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
+      received = true;
+      received_target_id = message->target_id;
+      received_frame_id = message->header.frame_id;
+      received_confidence = message->confidence;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makePatternImage(stamp));
+  cloud_pub->publish(makePointCloud(stamp));
+  spinFor(executor, std::chrono::milliseconds(200));
+
+  EXPECT_TRUE(received);
+  EXPECT_TRUE(std::regex_match(received_target_id, std::regex("^(digit_[0-9]|no_feature)$")));
+  EXPECT_EQ(received_frame_id, "base_link");
+  EXPECT_GE(received_confidence, 0.0F);
+  EXPECT_LE(received_confidence, 1.0F);
 
   executor.remove_node(io_node);
   executor.remove_node(perception_node);

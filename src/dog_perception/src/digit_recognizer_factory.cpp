@@ -1,110 +1,112 @@
 #include "dog_perception/digit_recognizer.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
+#include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace dog_perception
 {
 
 namespace
 {
-
-class HeuristicDigitRecognizer final : public IDigitRecognizer
+std::unordered_map<std::string, DigitRecognizerCreator> & recognizerRegistry()
 {
-public:
-  HeuristicDigitRecognizer(const DigitRecognizerParams & params, const rclcpp::Logger & logger)
-  : params_(params), logger_(logger)
-  {
-  }
+  static std::unordered_map<std::string, DigitRecognizerCreator> registry;
+  return registry;
+}
 
-  DigitRecognitionResult infer(const ImageView & view) override
-  {
-    if (!view.image) {
-      return DigitRecognitionResult{false, -1, 0.0F, "null_image"};
+std::mutex & recognizerRegistryMutex()
+{
+  static std::mutex registry_mutex;
+  return registry_mutex;
+}
+
+void ensureBuiltinDigitRecognizers(const rclcpp::Logger & logger)
+{
+  static std::once_flag register_once;
+  std::call_once(register_once, [&logger]() {
+    const bool heuristic_registered = registerHeuristicDigitRecognizer();
+    const bool mean_intensity_registered = registerMeanIntensityDigitRecognizer();
+    if (!heuristic_registered) {
+      RCLCPP_ERROR(logger, "Failed to register builtin recognizer: heuristic");
     }
-
-    const auto & image = *view.image;
-    if (image.width == 0U || image.height == 0U || image.data.empty()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_image"};
+    if (!mean_intensity_registered) {
+      RCLCPP_ERROR(logger, "Failed to register builtin recognizer: mean_intensity");
     }
-
-    const int image_width = static_cast<int>(image.width);
-    const int image_height = static_cast<int>(image.height);
-    const int roi_x = std::clamp(params_.roi_x, 0, image_width - 1);
-    const int roi_y = std::clamp(params_.roi_y, 0, image_height - 1);
-    const int roi_w = std::max(1, std::min(params_.roi_width, image_width - roi_x));
-    const int roi_h = std::max(1, std::min(params_.roi_height, image_height - roi_y));
-
-    const uint32_t channels = image.step / image.width;
-    if (channels == 0U) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_step"};
-    }
-
-    double mean = 0.0;
-    double m2 = 0.0;
-    size_t sample_count = 0;
-    size_t bright_count = 0;
-
-    for (int y = roi_y; y < roi_y + roi_h; ++y) {
-      const size_t row_base = static_cast<size_t>(y) * image.step;
-      for (int x = roi_x; x < roi_x + roi_w; ++x) {
-        const size_t index = row_base + static_cast<size_t>(x) * channels;
-        if (index >= image.data.size()) {
-          return DigitRecognitionResult{false, -1, 0.0F, "out_of_range"};
-        }
-
-        const double intensity = static_cast<double>(image.data[index]);
-        ++sample_count;
-        const double delta = intensity - mean;
-        mean += delta / static_cast<double>(sample_count);
-        const double delta2 = intensity - mean;
-        m2 += delta * delta2;
-
-        if (intensity >= params_.glare_brightness_threshold) {
-          ++bright_count;
-        }
-      }
-    }
-
-    if (sample_count == 0U) {
-      return DigitRecognitionResult{false, -1, 0.0F, "empty_roi"};
-    }
-
-    const double variance = m2 / static_cast<double>(sample_count);
-    const double glare_ratio = static_cast<double>(bright_count) / static_cast<double>(sample_count);
-    if (glare_ratio >= params_.glare_ratio_threshold) {
-      return DigitRecognitionResult{false, -1, 0.0F, "glare_filtered"};
-    }
-
-    double confidence = std::clamp((variance / 2500.0) * (1.0 - glare_ratio), 0.0, 1.0);
-    if (confidence < params_.min_confidence) {
-      return DigitRecognitionResult{false, -1, static_cast<float>(confidence), "low_confidence"};
-    }
-
-    const int label = static_cast<int>(std::lround(mean)) % 10;
-    return DigitRecognitionResult{true, label, static_cast<float>(confidence), "ok"};
-  }
-
-private:
-  DigitRecognizerParams params_;
-  rclcpp::Logger logger_;
-};
+  });
+}
 
 }  // namespace
+
+bool registerDigitRecognizer(
+  const std::string & recognizer_type,
+  DigitRecognizerCreator creator)
+{
+  if (recognizer_type.empty() || !creator) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(recognizerRegistryMutex());
+  auto & registry = recognizerRegistry();
+  const auto iterator = registry.find(recognizer_type);
+  if (iterator != registry.end()) {
+    RCLCPP_ERROR(
+      rclcpp::get_logger("digit_recognizer_factory"),
+      "Duplicate digit recognizer registration rejected: %s",
+      recognizer_type.c_str());
+    return false;
+  }
+
+  registry.emplace(recognizer_type, std::move(creator));
+  return true;
+}
 
 std::unique_ptr<IDigitRecognizer> DigitRecognizerFactory::create(
   const std::string & recognizer_type,
   const DigitRecognizerParams & params,
   const rclcpp::Logger & logger)
 {
-  if (recognizer_type.empty() || recognizer_type == "heuristic") {
-    return std::make_unique<HeuristicDigitRecognizer>(params, logger);
+  ensureBuiltinDigitRecognizers(logger);
+
+  const std::string resolved_type = recognizer_type.empty() ? "heuristic" : recognizer_type;
+  DigitRecognizerCreator creator;
+  bool fallback_used = false;
+
+  {
+    std::lock_guard<std::mutex> lock(recognizerRegistryMutex());
+    const auto & registry = recognizerRegistry();
+    const auto iterator = registry.find(resolved_type);
+    if (iterator != registry.end()) {
+      creator = iterator->second;
+    } else {
+      const auto fallback_iterator = registry.find("heuristic");
+      if (fallback_iterator != registry.end()) {
+        creator = fallback_iterator->second;
+        fallback_used = true;
+      }
+    }
   }
 
-  throw std::runtime_error("Unsupported digit recognizer type: " + recognizer_type);
+  if (!creator) {
+    throw std::runtime_error(
+            "No registered digit recognizer available. Requested type: " + resolved_type);
+  }
+
+  if (fallback_used) {
+    RCLCPP_WARN(
+      logger,
+      "Unsupported digit recognizer type: %s, fallback to heuristic",
+      resolved_type.c_str());
+  }
+
+  auto recognizer = creator(params, logger);
+  if (!recognizer) {
+    throw std::runtime_error(
+            "Digit recognizer creator returned null. Requested type: " + resolved_type);
+  }
+  return recognizer;
 }
 
 dog_interfaces::msg::Target3D toDigitTarget3D(

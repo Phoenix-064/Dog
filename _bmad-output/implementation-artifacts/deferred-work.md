@@ -13,3 +13,7 @@
 ## Deferred from: code review of 2-1-实时全局本体位姿发布 (2026-04-03)
 
 - 节点生命周期编排（Lifecycle）一致性缺口：当前变更聚焦 Pose 发布链路，`dog_behavior` 节点是否迁移 LifecycleNode 需在系统编排层统一决策后处理。
+
+## Deferred from: code review of 4-1-感知算法动态工厂与热插拔注入 (2026-04-04)
+
+- NFR-9“新增检测器改动面 < 2 文件”仍缺少可复验证据：当前提交已包含多处基础改造，需在后续“新增第三个检测器”演练中补充最小改动与构建日志证明。
