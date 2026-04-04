@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -30,6 +31,7 @@ public:
   size_t GetConsecutiveEmptyCount() const;
   bool IsDegradePending() const;
   int64_t GetLastBreakerToDegradeLatencyMs() const;
+  std::string GetLastRecoveryContextForTest() const;
 
 private:
   enum class GraspFeedbackType
@@ -62,6 +64,11 @@ private:
   void processGraspFeedback(const GraspFeedbackEvent & event);
   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
   void publishDegradeCommand(const std::string & task_id, const char * reason);
+  void publishRecoveryContext(
+    const StateStoreLoadResult & load_result,
+    int64_t load_cost_ms,
+    int64_t map_cost_ms,
+    int64_t total_cost_ms);
   void degradeTimeoutCallback(uint64_t request_id);
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
   static const char * feedbackTypeToString(GraspFeedbackType type);
@@ -78,6 +85,7 @@ private:
   std::string grasp_feedback_topic_;
   std::string degrade_command_topic_;
   std::string degrade_ack_topic_;
+  std::string recovery_context_topic_;
 
   mutable std::mutex breaker_mutex_;
   size_t consecutive_empty_count_{0U};
@@ -98,9 +106,13 @@ private:
   std::string last_feedback_task_id_;
   GraspFeedbackType last_feedback_type_{GraspFeedbackType::kUnknown};
 
+  mutable std::mutex recovery_context_mutex_;
+  std::string last_recovery_context_payload_;
+
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr grasp_feedback_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr degrade_ack_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
   rclcpp::TimerBase::SharedPtr degrade_timeout_timer_;
 };
 

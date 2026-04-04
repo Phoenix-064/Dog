@@ -7,12 +7,39 @@
 #include <chrono>
 #include <functional>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
 
 namespace dog_lifecycle
 {
+
+namespace
+{
+
+std::string percentEncode(const std::string & value)
+{
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string encoded;
+  encoded.reserve(value.size());
+
+  for (const auto byte_value : value) {
+    const auto c = static_cast<unsigned char>(byte_value);
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded.push_back(static_cast<char>(c));
+      continue;
+    }
+
+    encoded.push_back('%');
+    encoded.push_back(kHex[(c >> 4) & 0x0F]);
+    encoded.push_back(kHex[c & 0x0F]);
+  }
+
+  return encoded;
+}
+
+}  // namespace
 
 LifecycleNode::LifecycleNode()
 : LifecycleNode(rclcpp::NodeOptions())
@@ -22,6 +49,7 @@ LifecycleNode::LifecycleNode()
 LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dog_lifecycle", options)
 {
+  const auto recover_total_start = std::chrono::steady_clock::now();
   const auto state_file_path = declare_parameter<std::string>(
     "persistence.state_file_path", "/tmp/dog_lifecycle/state.yaml");
   const auto backup_file_path = declare_parameter<std::string>(
@@ -37,6 +65,8 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
   grasp_feedback_topic_ = declare_parameter<std::string>("grasp_feedback_topic", "/behavior/grasp_feedback");
   degrade_command_topic_ = declare_parameter<std::string>("degrade_command_topic", "/lifecycle/degrade_command");
   degrade_ack_topic_ = declare_parameter<std::string>("degrade_ack_topic", "/lifecycle/degrade_ack");
+  recovery_context_topic_ = declare_parameter<std::string>(
+    "recovery_context_topic", "/lifecycle/recovery_context");
 
   int64_t validated_max_write_bytes = max_write_bytes;
   if (validated_max_write_bytes <= 0) {
@@ -108,7 +138,16 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
 
   state_store_ = std::make_unique<YamlStateStore>(config);
 
+  recovery_context_pub_ = create_publisher<std_msgs::msg::String>(
+    recovery_context_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal));
+
+  const auto load_start = std::chrono::steady_clock::now();
   const auto load_result = state_store_->Load();
+  const auto load_end = std::chrono::steady_clock::now();
+  const auto map_start = std::chrono::steady_clock::now();
   if (load_result.result.ok && load_result.state.has_value()) {
     RCLCPP_INFO(
       get_logger(),
@@ -123,6 +162,13 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
       "no valid persisted state loaded: %s",
       load_result.result.message.c_str());
   }
+  const auto map_end = std::chrono::steady_clock::now();
+  const auto recover_total_end = std::chrono::steady_clock::now();
+  const auto load_cost_ms = std::chrono::duration_cast<std::chrono::milliseconds>(load_end - load_start).count();
+  const auto map_cost_ms = std::chrono::duration_cast<std::chrono::milliseconds>(map_end - map_start).count();
+  const auto total_cost_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(recover_total_end - recover_total_start).count();
+  publishRecoveryContext(load_result, load_cost_ms, map_cost_ms, total_cost_ms);
 
   degrade_command_pub_ = create_publisher<std_msgs::msg::String>(
     degrade_command_topic_,
@@ -237,6 +283,12 @@ int64_t LifecycleNode::GetLastBreakerToDegradeLatencyMs() const
 {
   std::lock_guard<std::mutex> lock(breaker_mutex_);
   return last_breaker_to_degrade_latency_ms_;
+}
+
+std::string LifecycleNode::GetLastRecoveryContextForTest() const
+{
+  std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+  return last_recovery_context_payload_;
 }
 
 void LifecycleNode::graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg)
@@ -528,6 +580,51 @@ void LifecycleNode::publishDegradeCommand(const std::string & task_id, const cha
     request_id,
     latency_ms,
     command.data.c_str());
+}
+
+void LifecycleNode::publishRecoveryContext(
+  const StateStoreLoadResult & load_result,
+  int64_t load_cost_ms,
+  int64_t map_cost_ms,
+  int64_t total_cost_ms)
+{
+  std_msgs::msg::String recovery_context;
+  std::ostringstream payload;
+
+  if (load_result.result.ok && load_result.state.has_value()) {
+    payload
+      << "mode=recovered"
+      << ";task_phase=" << percentEncode(load_result.state->task_phase)
+      << ";target_state=" << percentEncode(load_result.state->target_state)
+      << ";timestamp_ms=" << load_result.state->timestamp_ms
+      << ";version=" << load_result.state->version;
+  } else {
+    payload
+      << "mode=cold_start"
+      << ";task_phase="
+      << ";target_state="
+      << ";timestamp_ms=0"
+      << ";version=" << supported_state_version_
+        << ";reason=" << percentEncode(normalizeToken(load_result.result.message));
+  }
+
+  payload
+    << ";load_ms=" << load_cost_ms
+    << ";map_ms=" << map_cost_ms
+    << ";total_ms=" << total_cost_ms;
+  recovery_context.data = payload.str();
+
+  {
+    std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+    last_recovery_context_payload_ = recovery_context.data;
+  }
+
+  recovery_context_pub_->publish(recovery_context);
+  RCLCPP_INFO(
+    get_logger(),
+    "recovery_context_published topic=%s payload=%s",
+    recovery_context_topic_.c_str(),
+    recovery_context.data.c_str());
 }
 
 void LifecycleNode::degradeTimeoutCallback(uint64_t request_id)

@@ -1,0 +1,1012 @@
+diff --git "a/_bmad-output/implementation-artifacts/5-1-yaml-\346\226\255\347\224\265\350\277\233\345\272\246\346\201\242\345\244\215\350\257\273\345\217\226\344\270\216\351\207\215\345\220\257\351\207\215\345\273\272.md" "b/_bmad-output/implementation-artifacts/5-1-yaml-\346\226\255\347\224\265\350\277\233\345\272\246\346\201\242\345\244\215\350\257\273\345\217\226\344\270\216\351\207\215\345\220\257\351\207\215\345\273\272.md"
+new file mode 100644
+index 0000000..9c3defe
+--- /dev/null
++++ "b/_bmad-output/implementation-artifacts/5-1-yaml-\346\226\255\347\224\265\350\277\233\345\272\246\346\201\242\345\244\215\350\257\273\345\217\226\344\270\216\351\207\215\345\220\257\351\207\215\345\273\272.md"
+@@ -0,0 +1,150 @@
++# Story 5.1: YAML 断电进度恢复读取与重启重建
++
++Status: review
++
++## Story
++
++As a 领队,
++I want 系统在不预期掉电重启后能基于缓存找回当前赛场进度,
++so that 省去由于断电必须重新发车的重创。
++
++## Acceptance Criteria
++
++1. Given 持久化文件存在（Story 1.5 构建），When 系统从死机拉起首帧，Then 脱离该 YAML 重构上下文节点避免执行已完成的任务（FR-3.4），全栈拉起到准备完毕耗时低于 < 2s（NFR-3）。
++
++## Tasks / Subtasks
++
++- [x] 构建“启动即恢复”的主链路（AC: 1）
++  - [x] 在 `dog_lifecycle::LifecycleNode` 启动阶段读取 `YamlStateStore::Load()` 返回状态，并形成可发布的恢复上下文。
++  - [x] 明确恢复状态最小集合：`task_phase`、`target_state`、`timestamp_ms`、`version`，禁止引入与当前契约不兼容的新必填字段。
++  - [x] 若主文件损坏但备份可用，复用 `YamlStateStore` 既有修复语义，不新增平行修复实现。
++
++- [x] 建立“避免重复执行已完成任务”的恢复裁决（AC: 1）
++  - [x] 在 `dog_lifecycle` 内根据恢复状态生成“已完成任务屏蔽”信号（例如发布恢复事件/状态），供行为层跳过已完成目标。
++  - [x] 与 `dog_behavior` 对齐最小输入契约（任务 ID/阶段），仅做必要映射，不重构 Epic 2 的 Action 链路。
++  - [x] 明确恢复失败降级策略：无有效状态时进入“冷启动全新流程”，并输出结构化日志，不阻塞节点拉起。
++
++- [x] 满足重启时间预算与非阻塞约束（AC: 1）
++  - [x] 恢复读取与状态映射必须在节点初始化路径完成，禁止在高频回调内执行阻塞 IO。
++  - [x] 记录恢复阶段关键耗时（load、parse/validate、publish/dispatch），并验证总耗时满足 < 2 秒目标。
++  - [x] 保持回调链路无 `sleep_for` / 忙等；所有下游通知采用 ROS 2 异步消息机制。
++
++- [x] 完成测试与验收（AC: 1）
++  - [x] 在 `dog_lifecycle` 新增/扩展单测：有效状态恢复、损坏主文件回退备份、无文件冷启动三条路径。
++  - [x] 增加恢复裁决测试：已完成任务会被跳过，未完成任务会继续执行。
++  - [x] 增加时延断言测试：恢复链路在测试环境可稳定满足 < 2 秒门槛。
++  - [x] 运行定向验证：`colcon test --packages-select dog_lifecycle dog_behavior`。
++
++## Dev Notes
++
++- 本故事直接承接 Story 1.5 已落地的持久化底座，目标是“恢复流程闭环”，不是重新实现 YAML 存储层。
++- 该故事是 Epic 5 的首条故事，优先保证“异常重启可恢复”与“不重复执行”两件事，避免引入额外复杂调度。
++- 与 Story 5.2/5.3 的边界：本故事不实现丢帧外推补偿与心跳重联，仅提供恢复上下文和恢复后的最小流程衔接。
++
++### Technical Requirements
++
++- 必须复用既有 `YamlStateStore` / `IStateStore`（`src/dog_lifecycle/include/dog_lifecycle/state_store.hpp`、`yaml_state_store.hpp`），禁止重复造轮子。
++- 恢复逻辑遵循当前版本约束（`persistence.state_version`），版本不匹配时按无效状态处理并可观测告警。
++- 参数读取保持初始化期完成；恢复链路仅在启动阶段执行，不下沉到高频传感回调。
++- 日志统一 `RCLCPP_INFO/WARN/ERROR`，禁止 `std::cout/printf`。
++
++### Architecture Compliance
++
++- 保持四包职责边界：
++  - `dog_lifecycle`：状态恢复判定与恢复上下文发布；
++  - `dog_behavior`：消费恢复信号并执行任务跳过策略；
++  - `dog_perception`：不引入持久化写读逻辑。
++- 保持 `.hpp/.cpp` 分离与 include 路径规范（带包名前缀）。
++- 不改动既有熔断语义（Story 3.1）与工厂热插拔语义（Story 4.1）。
++
++### Library & Framework Requirements
++
++- ROS 2 Humble + `rclcpp` + `std_msgs` + 现有 `dog_interfaces` 契约。
++- 持久化依赖继续使用 `yaml-cpp`（经 `yaml_cpp_vendor`），不新增数据库或外部存储依赖。
++- 测试沿用 `ament_cmake_gtest` 与现有 `dog_lifecycle`/`dog_behavior` 测试结构。
++
++### File Structure Requirements
++
++- 预期主要改动文件（按最小改动原则）：
++  - `src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp`
++  - `src/dog_lifecycle/src/lifecycle_node.cpp`
++  - `src/dog_lifecycle/config/persistence.yaml`（如需补充恢复参数）
++  - `src/dog_lifecycle/test/test_lifecycle_node.cpp`
++  - `src/dog_behavior/include/dog_behavior/*.hpp`（仅在需要接收恢复信号时）
++  - `src/dog_behavior/src/*.cpp`（仅在需要接线恢复信号时）
++  - `src/dog_lifecycle/CMakeLists.txt` / `src/dog_behavior/CMakeLists.txt`（按需）
++  - `src/dog_lifecycle/package.xml` / `src/dog_behavior/package.xml`（按需）
++
++### Testing Requirements
++
++- 恢复有效性：给定有效状态文件，启动后能恢复任务上下文并避免重复执行已完成任务。
++- 容错恢复：主文件损坏时可回退备份；主备都损坏时冷启动并输出明确错误。
++- 性能门槛：恢复链路启动耗时 < 2 秒（NFR-3）。
++- 回归保护：不得破坏现有熔断与持久化测试（`test_lifecycle_node`、`test_yaml_state_store`）。
++
++### Reinvention Prevention
++
++- 严禁新增第二套“状态文件格式/存取类”；所有读写统一走 `IStateStore` 抽象。
++- 严禁在 `dog_behavior` 或 `dog_perception` 直接读写 YAML 文件。
++- 严禁把恢复流程做成阻塞等待外部反馈的同步链路。
++
++### Project Context Reference
++
++- 遵循 `_bmad-output/project-context.md`：零拷贝与智能指针优先、依赖声明同步、日志规范统一。
++- 遵循 `_bmad-output/planning-artifacts/architecture.md`：Lifecycle 守护职责、参数初始化读取、异步非阻塞执行器规则。
++- 承接 `_bmad-output/implementation-artifacts/1-5-持久化基础设施准备与-io-工具链.md`：原子写、备份回退、版本校验、清理语义。
++
++## References
++
++- `_bmad-output/planning-artifacts/epics.md`（Epic 5 / Story 5.1）
++- `_bmad-output/planning-artifacts/prd.md`（FR-3.4, NFR-3）
++- `_bmad-output/planning-artifacts/architecture.md`（Data Architecture / Lifecycle Patterns）
++- `_bmad-output/project-context.md`（实现约束）
++- `_bmad-output/implementation-artifacts/1-5-持久化基础设施准备与-io-工具链.md`（可复用持久化底座）
++- `src/dog_lifecycle/include/dog_lifecycle/state_store.hpp`
++- `src/dog_lifecycle/include/dog_lifecycle/yaml_state_store.hpp`
++- `src/dog_lifecycle/src/yaml_state_store.cpp`
++- `src/dog_lifecycle/src/lifecycle_node.cpp`
++
++## Story Completion Status
++
++- 状态：`review`
++- 完成说明：已实现启动恢复发布、行为层恢复裁决、耗时指标与测试覆盖，满足进入评审条件。
++
++## Dev Agent Record
++
++### Agent Model Used
++
++GPT-5.3-Codex
++
++### Debug Log References
++
++- create-story workflow execution in VS Code Copilot session (2026-04-04)
++- 自动选取首个 backlog 故事：`5-1-yaml-断电进度恢复读取与重启重建`
++- 分析输入：`epics.md`、`prd.md`、`architecture.md`、`project-context.md`
++- 复用情报：`1-5-持久化基础设施准备与-io-工具链.md` 与 `dog_lifecycle` 当前源码
++
++### Completion Notes List
++
++- 已将故事状态设置为 `ready-for-dev`。
++- 已把“复用 Story 1.5 持久化底座”定义为强制约束，防止重复实现。
++- 已给出恢复成功、恢复降级、恢复失败三类可执行行为与测试覆盖要求。
++- 已显式限制本故事范围，避免与 5.2/5.3 产生职责混叠。
++- 已在 `dog_lifecycle` 启动路径发布恢复上下文（`mode=recovered/cold_start`），并输出 `load_ms/map_ms/total_ms` 指标。
++- 已在 `dog_behavior` 接入恢复上下文订阅，针对已完成 `task_phase` 执行跳过，未完成任务保持可执行。
++- 已扩展单测覆盖：有效恢复、主损坏回退备份、无文件冷启动、恢复总耗时 < 2s、已完成任务跳过/未完成继续。
++
++### File List
++
++- `_bmad-output/implementation-artifacts/5-1-yaml-断电进度恢复读取与重启重建.md`
++- `_bmad-output/implementation-artifacts/sprint-status.yaml`
++- `src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp`
++- `src/dog_lifecycle/src/lifecycle_node.cpp`
++- `src/dog_lifecycle/test/test_lifecycle_node.cpp`
++- `src/dog_behavior/include/dog_behavior/behavior_node.hpp`
++- `src/dog_behavior/src/behavior_node.cpp`
++- `src/dog_behavior/test/test_behavior_node.cpp`
++
++### Change Log
++
++- 2026-04-04: 完成 Story 5.1 实现；新增恢复上下文发布与消费链路，补齐恢复/回退/冷启动/时延与恢复裁决测试。
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index ab1fb7a..c040e5d 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -60,7 +60,7 @@ development_status:
+   4-1-感知算法动态工厂与热插拔注入: done
+   epic-4-retrospective: optional
+   epic-5: in-progress
+-  5-1-yaml-断电进度恢复读取与重启重建: ready-for-dev
++  5-1-yaml-断电进度恢复读取与重启重建: review
+   5-2-单侧丢帧先验外推补偿与急停空转: backlog
+   5-3-节点假死心跳健康守护重联: backlog
+   epic-5-retrospective: optional
+diff --git a/src/dog_behavior/include/dog_behavior/behavior_node.hpp b/src/dog_behavior/include/dog_behavior/behavior_node.hpp
+index 9145647..2af3a84 100644
+--- a/src/dog_behavior/include/dog_behavior/behavior_node.hpp
++++ b/src/dog_behavior/include/dog_behavior/behavior_node.hpp
+@@ -9,6 +9,7 @@
+ #include <std_msgs/msg/string.hpp>
+ 
+ #include <mutex>
++#include <unordered_set>
+ 
+ namespace dog_behavior
+ {
+@@ -21,6 +22,7 @@ public:
+ 
+   bool triggerExecuteBehavior(const std::string & behavior_name);
+   std::string getExecutionState() const;
++  bool IsTaskPhaseRecoveredForTest(const std::string & task_phase) const;
+ 
+ private:
+   using ExecuteBehavior = dog_interfaces::action::ExecuteBehavior;
+@@ -41,6 +43,7 @@ private:
+ 
+   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
+   void executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg);
++  void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+   void actionServerWaitTimerCallback();
+   void feedbackWatchdogTimerCallback();
+   void goalResponseCallback(ExecuteBehaviorGoalHandle::SharedPtr goal_handle);
+@@ -50,12 +53,16 @@ private:
+   void resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result);
+   bool canSendGoalLocked() const;
+   std::string executionStateToString(ExecutionState state) const;
++  static std::string normalizeToken(const std::string & value);
++  static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
++  bool isCompletedState(const std::string & target_state) const;
+   bool isFinitePose(const geometry_msgs::msg::Pose & pose) const;
+   bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
+ 
+   std::string default_frame_id_;
+   std::string execute_behavior_action_name_;
+   std::string execute_behavior_trigger_topic_;
++  std::string recovery_context_topic_;
+   double action_server_wait_timeout_sec_;
+   double feedback_timeout_sec_;
+ 
+@@ -65,12 +72,14 @@ private:
+   bool action_goal_pending_;
+   bool action_goal_active_;
+   bool has_latest_pose_;
++  std::unordered_set<std::string> recovered_completed_task_phases_;
+   geometry_msgs::msg::PoseStamped latest_pose_;
+   rclcpp::Time action_server_wait_start_time_;
+   rclcpp::Time last_feedback_time_;
+ 
+   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr execute_trigger_sub_;
++  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr recovery_context_sub_;
+   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr global_pose_pub_;
+   rclcpp::TimerBase::SharedPtr action_server_wait_timer_;
+   rclcpp::TimerBase::SharedPtr feedback_watchdog_timer_;
+diff --git a/src/dog_behavior/src/behavior_node.cpp b/src/dog_behavior/src/behavior_node.cpp
+index a71d070..c9c7f30 100644
+--- a/src/dog_behavior/src/behavior_node.cpp
++++ b/src/dog_behavior/src/behavior_node.cpp
+@@ -1,6 +1,7 @@
+ #include "dog_behavior/behavior_node.hpp"
+ 
+ #include <cmath>
++#include <cctype>
+ #include <chrono>
+ #include <functional>
+ #include <utility>
+@@ -30,6 +31,9 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
+   execute_behavior_trigger_topic_ = declare_parameter<std::string>(
+     "execute_behavior_trigger_topic",
+     "/behavior/execute_trigger");
++  recovery_context_topic_ = declare_parameter<std::string>(
++    "recovery_context_topic",
++    "/lifecycle/recovery_context");
+   action_server_wait_timeout_sec_ = declare_parameter<double>("action_server_wait_timeout_sec", 5.0);
+   feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 2.0);
+ 
+@@ -71,6 +75,13 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
+     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+     std::bind(&BehaviorNode::executeTriggerCallback, this, std::placeholders::_1));
+ 
++  recovery_context_sub_ = create_subscription<std_msgs::msg::String>(
++    recovery_context_topic_,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal),
++    std::bind(&BehaviorNode::recoveryContextCallback, this, std::placeholders::_1));
++
+   {
+     std::lock_guard<std::mutex> lock(state_mutex_);
+     execution_state_ = ExecutionState::kWaitingServer;
+@@ -87,12 +98,13 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
+ 
+   RCLCPP_INFO(
+     get_logger(),
+-    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s",
++    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s",
+     localization_topic.c_str(),
+     global_pose_topic.c_str(),
+     default_frame_id_.c_str(),
+     execute_behavior_action_name_.c_str(),
+-    execute_behavior_trigger_topic_.c_str());
++    execute_behavior_trigger_topic_.c_str(),
++    recovery_context_topic_.c_str());
+ }
+ 
+ void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+@@ -165,6 +177,45 @@ void BehaviorNode::executeTriggerCallback(const std_msgs::msg::String::ConstShar
+   }
+ }
+ 
++void BehaviorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg)
++{
++  const auto mode = parseKeyValuePayload(msg->data, "mode");
++  const auto task_phase = parseKeyValuePayload(msg->data, "task_phase");
++  const auto target_state = parseKeyValuePayload(msg->data, "target_state");
++
++  std::lock_guard<std::mutex> lock(state_mutex_);
++  if (mode == "cold_start") {
++    recovered_completed_task_phases_.clear();
++    RCLCPP_INFO(get_logger(), "recovery_context_cold_start_received, cleared recovered task filters");
++    return;
++  }
++
++  if (mode != "recovered") {
++    RCLCPP_WARN(get_logger(), "ignore unknown recovery mode: %s", mode.c_str());
++    return;
++  }
++
++  if (task_phase.empty()) {
++    RCLCPP_WARN(get_logger(), "ignore recovered context with empty task_phase");
++    return;
++  }
++
++  if (!isCompletedState(target_state)) {
++    RCLCPP_INFO(
++      get_logger(),
++      "recovered task remains executable, task_phase=%s target_state=%s",
++      task_phase.c_str(),
++      target_state.c_str());
++    return;
++  }
++
++  recovered_completed_task_phases_.insert(task_phase);
++  RCLCPP_INFO(
++    get_logger(),
++    "recovered completed task phase is blocked from re-execution: %s",
++    task_phase.c_str());
++}
++
+ void BehaviorNode::actionServerWaitTimerCallback()
+ {
+   if (execute_behavior_client_->wait_for_action_server(std::chrono::seconds(0))) {
+@@ -230,9 +281,21 @@ void BehaviorNode::feedbackWatchdogTimerCallback()
+ 
+ bool BehaviorNode::triggerExecuteBehavior(const std::string & behavior_name)
+ {
++  const auto normalized_behavior_name = normalizeToken(behavior_name);
+   ExecuteBehavior::Goal goal;
+   {
+     std::lock_guard<std::mutex> lock(state_mutex_);
++    if (
++      !normalized_behavior_name.empty() &&
++      recovered_completed_task_phases_.find(normalized_behavior_name) != recovered_completed_task_phases_.end())
++    {
++      RCLCPP_INFO(
++        get_logger(),
++        "skip execute behavior due to recovered completed task phase=%s",
++        normalized_behavior_name.c_str());
++      return false;
++    }
++
+     if (!canSendGoalLocked()) {
+       RCLCPP_WARN(
+         get_logger(),
+@@ -386,6 +449,13 @@ bool BehaviorNode::canSendGoalLocked() const
+   return true;
+ }
+ 
++bool BehaviorNode::IsTaskPhaseRecoveredForTest(const std::string & task_phase) const
++{
++  const auto normalized_task_phase = normalizeToken(task_phase);
++  std::lock_guard<std::mutex> lock(state_mutex_);
++  return recovered_completed_task_phases_.find(normalized_task_phase) != recovered_completed_task_phases_.end();
++}
++
+ std::string BehaviorNode::getExecutionState() const
+ {
+   std::lock_guard<std::mutex> lock(state_mutex_);
+@@ -418,6 +488,51 @@ std::string BehaviorNode::executionStateToString(ExecutionState state) const
+   }
+ }
+ 
++std::string BehaviorNode::normalizeToken(const std::string & value)
++{
++  std::string normalized;
++  normalized.reserve(value.size());
++  for (const auto ch : value) {
++    if (std::isspace(static_cast<unsigned char>(ch))) {
++      continue;
++    }
++    normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
++  }
++  return normalized;
++}
++
++std::string BehaviorNode::parseKeyValuePayload(const std::string & payload, const std::string & key)
++{
++  static const std::string delimiter = ";";
++  const auto normalized_key = normalizeToken(key);
++
++  size_t start = 0;
++  while (start <= payload.size()) {
++    const auto end = payload.find(delimiter, start);
++    const auto token = payload.substr(start, end == std::string::npos ? std::string::npos : end - start);
++    const auto equal_pos = token.find('=');
++    if (equal_pos != std::string::npos) {
++      const auto token_key = normalizeToken(token.substr(0, equal_pos));
++      if (token_key == normalized_key) {
++        return normalizeToken(token.substr(equal_pos + 1));
++      }
++    }
++
++    if (end == std::string::npos) {
++      break;
++    }
++    start = end + 1;
++  }
++
++  return "";
++}
++
++bool BehaviorNode::isCompletedState(const std::string & target_state) const
++{
++  return target_state == "done" || target_state == "completed" || target_state == "succeeded" ||
++         target_state == "success" || target_state == "finished";
++}
++
+ bool BehaviorNode::isFinitePose(const geometry_msgs::msg::Pose & pose) const
+ {
+   return std::isfinite(pose.position.x) &&
+diff --git a/src/dog_behavior/test/test_behavior_node.cpp b/src/dog_behavior/test/test_behavior_node.cpp
+index aa0ef31..59ab203 100644
+--- a/src/dog_behavior/test/test_behavior_node.cpp
++++ b/src/dog_behavior/test/test_behavior_node.cpp
+@@ -669,6 +669,140 @@ TEST_F(BehaviorNodeTest, HandlesAbortedResultAsFailed)
+ 
+   EXPECT_EQ(action_server->goalCount(), 1);
+ 
++  executor.remove_node(action_server);
++  executor.remove_node(io_node);
++  executor.remove_node(behavior_node);
++}
++
++TEST_F(BehaviorNodeTest, SkipsRecoveredCompletedTaskPhase)
++{
++  const std::string odom_topic = "/test/localization/recovery_skip";
++  const std::string pose_topic = "/test/global_pose/recovery_skip";
++  const std::string action_name = "/test/behavior/execute_recovery_skip";
++  const std::string trigger_topic = "/test/behavior/trigger_recovery_skip";
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_skip";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("global_pose_topic", pose_topic);
++  options.append_parameter_override("localization_topic", odom_topic);
++  options.append_parameter_override("default_frame_id", "map");
++  options.append_parameter_override("execute_behavior_action_name", action_name);
++  options.append_parameter_override("execute_behavior_trigger_topic", trigger_topic);
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++  options.append_parameter_override("action_server_wait_timeout_sec", 2.0);
++
++  auto behavior_node = std::make_shared<dog_behavior::BehaviorNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("behavior_test_io_recovery_skip");
++  auto action_server = std::make_shared<MockExecuteBehaviorServer>(
++    action_name,
++    false,
++    MockExecuteBehaviorServer::ResponseMode::kSucceed);
++
++  auto odom_pub = io_node->create_publisher<nav_msgs::msg::Odometry>(
++    odom_topic,
++    rclcpp::SensorDataQoS().keep_last(20));
++  auto recovery_pub = io_node->create_publisher<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal));
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(behavior_node);
++  executor.add_node(io_node);
++  executor.add_node(action_server);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1200), [&behavior_node]() {
++    return behavior_node->getExecutionState() == "idle";
++  }));
++
++  nav_msgs::msg::Odometry odom;
++  odom.header.stamp = behavior_node->now();
++  odom.header.frame_id = "map";
++  odom.pose.pose.orientation.w = 1.0;
++  odom_pub->publish(odom);
++  spinFor(executor, std::chrono::milliseconds(100));
++
++  std_msgs::msg::String recovery;
++  recovery.data = "mode=recovered;task_phase=deliver_box;target_state=done;timestamp_ms=100;version=1";
++  recovery_pub->publish(recovery);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&behavior_node]() {
++    return behavior_node->IsTaskPhaseRecoveredForTest("deliver_box");
++  }));
++
++  EXPECT_FALSE(behavior_node->triggerExecuteBehavior("deliver_box"));
++  spinFor(executor, std::chrono::milliseconds(120));
++  EXPECT_EQ(action_server->goalCount(), 0);
++
++  executor.remove_node(action_server);
++  executor.remove_node(io_node);
++  executor.remove_node(behavior_node);
++}
++
++TEST_F(BehaviorNodeTest, ContinuesUnfinishedRecoveredTaskPhase)
++{
++  const std::string odom_topic = "/test/localization/recovery_continue";
++  const std::string pose_topic = "/test/global_pose/recovery_continue";
++  const std::string action_name = "/test/behavior/execute_recovery_continue";
++  const std::string trigger_topic = "/test/behavior/trigger_recovery_continue";
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_continue";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("global_pose_topic", pose_topic);
++  options.append_parameter_override("localization_topic", odom_topic);
++  options.append_parameter_override("default_frame_id", "map");
++  options.append_parameter_override("execute_behavior_action_name", action_name);
++  options.append_parameter_override("execute_behavior_trigger_topic", trigger_topic);
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++  options.append_parameter_override("action_server_wait_timeout_sec", 2.0);
++
++  auto behavior_node = std::make_shared<dog_behavior::BehaviorNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("behavior_test_io_recovery_continue");
++  auto action_server = std::make_shared<MockExecuteBehaviorServer>(
++    action_name,
++    false,
++    MockExecuteBehaviorServer::ResponseMode::kSucceed);
++
++  auto odom_pub = io_node->create_publisher<nav_msgs::msg::Odometry>(
++    odom_topic,
++    rclcpp::SensorDataQoS().keep_last(20));
++  auto recovery_pub = io_node->create_publisher<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal));
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(behavior_node);
++  executor.add_node(io_node);
++  executor.add_node(action_server);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1200), [&behavior_node]() {
++    return behavior_node->getExecutionState() == "idle";
++  }));
++
++  nav_msgs::msg::Odometry odom;
++  odom.header.stamp = behavior_node->now();
++  odom.header.frame_id = "map";
++  odom.pose.pose.orientation.w = 1.0;
++  odom_pub->publish(odom);
++  spinFor(executor, std::chrono::milliseconds(100));
++
++  std_msgs::msg::String recovery;
++  recovery.data = "mode=recovered;task_phase=deliver_box;target_state=running;timestamp_ms=101;version=1";
++  recovery_pub->publish(recovery);
++  spinFor(executor, std::chrono::milliseconds(100));
++
++  EXPECT_FALSE(behavior_node->IsTaskPhaseRecoveredForTest("deliver_box"));
++  EXPECT_TRUE(behavior_node->triggerExecuteBehavior("deliver_box"));
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::seconds(2), [&behavior_node]() {
++    return behavior_node->getExecutionState() == "succeeded";
++  }));
++
++  EXPECT_EQ(action_server->goalCount(), 1);
++
+   executor.remove_node(action_server);
+   executor.remove_node(io_node);
+   executor.remove_node(behavior_node);
+diff --git a/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp b/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp
+index 1014dfa..43a394c 100644
+--- a/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp
++++ b/src/dog_lifecycle/include/dog_lifecycle/lifecycle_node.hpp
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ #include <mutex>
++#include <optional>
+ #include <cstddef>
+ #include <cstdint>
+ #include <string>
+@@ -30,6 +31,7 @@ public:
+   size_t GetConsecutiveEmptyCount() const;
+   bool IsDegradePending() const;
+   int64_t GetLastBreakerToDegradeLatencyMs() const;
++  std::string GetLastRecoveryContextForTest() const;
+ 
+ private:
+   enum class GraspFeedbackType
+@@ -62,6 +64,11 @@ private:
+   void processGraspFeedback(const GraspFeedbackEvent & event);
+   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
+   void publishDegradeCommand(const std::string & task_id, const char * reason);
++  void publishRecoveryContext(
++    const StateStoreLoadResult & load_result,
++    int64_t load_cost_ms,
++    int64_t map_cost_ms,
++    int64_t total_cost_ms);
+   void degradeTimeoutCallback(uint64_t request_id);
+   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
+   static const char * feedbackTypeToString(GraspFeedbackType type);
+@@ -78,6 +85,7 @@ private:
+   std::string grasp_feedback_topic_;
+   std::string degrade_command_topic_;
+   std::string degrade_ack_topic_;
++  std::string recovery_context_topic_;
+ 
+   mutable std::mutex breaker_mutex_;
+   size_t consecutive_empty_count_{0U};
+@@ -98,9 +106,13 @@ private:
+   std::string last_feedback_task_id_;
+   GraspFeedbackType last_feedback_type_{GraspFeedbackType::kUnknown};
+ 
++  mutable std::mutex recovery_context_mutex_;
++  std::string last_recovery_context_payload_;
++
+   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr grasp_feedback_sub_;
+   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr degrade_ack_sub_;
+   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
++  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
+   rclcpp::TimerBase::SharedPtr degrade_timeout_timer_;
+ };
+ 
+diff --git a/src/dog_lifecycle/src/lifecycle_node.cpp b/src/dog_lifecycle/src/lifecycle_node.cpp
+index a889855..188f653 100644
+--- a/src/dog_lifecycle/src/lifecycle_node.cpp
++++ b/src/dog_lifecycle/src/lifecycle_node.cpp
+@@ -7,6 +7,7 @@
+ #include <chrono>
+ #include <functional>
+ #include <limits>
++#include <sstream>
+ #include <stdexcept>
+ #include <unordered_map>
+ #include <utility>
+@@ -22,6 +23,7 @@ LifecycleNode::LifecycleNode()
+ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
+ : rclcpp::Node("dog_lifecycle", options)
+ {
++  const auto recover_total_start = std::chrono::steady_clock::now();
+   const auto state_file_path = declare_parameter<std::string>(
+     "persistence.state_file_path", "/tmp/dog_lifecycle/state.yaml");
+   const auto backup_file_path = declare_parameter<std::string>(
+@@ -37,6 +39,8 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
+   grasp_feedback_topic_ = declare_parameter<std::string>("grasp_feedback_topic", "/behavior/grasp_feedback");
+   degrade_command_topic_ = declare_parameter<std::string>("degrade_command_topic", "/lifecycle/degrade_command");
+   degrade_ack_topic_ = declare_parameter<std::string>("degrade_ack_topic", "/lifecycle/degrade_ack");
++  recovery_context_topic_ = declare_parameter<std::string>(
++    "recovery_context_topic", "/lifecycle/recovery_context");
+ 
+   int64_t validated_max_write_bytes = max_write_bytes;
+   if (validated_max_write_bytes <= 0) {
+@@ -108,7 +112,16 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
+ 
+   state_store_ = std::make_unique<YamlStateStore>(config);
+ 
++  recovery_context_pub_ = create_publisher<std_msgs::msg::String>(
++    recovery_context_topic_,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal));
++
++  const auto load_start = std::chrono::steady_clock::now();
+   const auto load_result = state_store_->Load();
++  const auto load_end = std::chrono::steady_clock::now();
++  const auto map_start = std::chrono::steady_clock::now();
+   if (load_result.result.ok && load_result.state.has_value()) {
+     RCLCPP_INFO(
+       get_logger(),
+@@ -123,6 +136,13 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
+       "no valid persisted state loaded: %s",
+       load_result.result.message.c_str());
+   }
++  const auto map_end = std::chrono::steady_clock::now();
++  const auto recover_total_end = std::chrono::steady_clock::now();
++  const auto load_cost_ms = std::chrono::duration_cast<std::chrono::milliseconds>(load_end - load_start).count();
++  const auto map_cost_ms = std::chrono::duration_cast<std::chrono::milliseconds>(map_end - map_start).count();
++  const auto total_cost_ms =
++    std::chrono::duration_cast<std::chrono::milliseconds>(recover_total_end - recover_total_start).count();
++  publishRecoveryContext(load_result, load_cost_ms, map_cost_ms, total_cost_ms);
+ 
+   degrade_command_pub_ = create_publisher<std_msgs::msg::String>(
+     degrade_command_topic_,
+@@ -147,12 +167,7 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
+     feedback_dedup_window_ms_);
+ }
+ 
+-LifecycleNode::~LifecycleNode()
+-{
+-  if (!ClearPersistentState()) {
+-    RCLCPP_ERROR(get_logger(), "failed to clear persistent state during shutdown");
+-  }
+-}
++LifecycleNode::~LifecycleNode() = default;
+ 
+ bool LifecycleNode::PersistTransition(const std::string & task_phase, const std::string & target_state)
+ {
+@@ -239,6 +254,12 @@ int64_t LifecycleNode::GetLastBreakerToDegradeLatencyMs() const
+   return last_breaker_to_degrade_latency_ms_;
+ }
+ 
++std::string LifecycleNode::GetLastRecoveryContextForTest() const
++{
++  std::lock_guard<std::mutex> lock(recovery_context_mutex_);
++  return last_recovery_context_payload_;
++}
++
+ void LifecycleNode::graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+ {
+   const auto event = parseGraspFeedback(msg->data, now());
+@@ -530,6 +551,51 @@ void LifecycleNode::publishDegradeCommand(const std::string & task_id, const cha
+     command.data.c_str());
+ }
+ 
++void LifecycleNode::publishRecoveryContext(
++  const StateStoreLoadResult & load_result,
++  int64_t load_cost_ms,
++  int64_t map_cost_ms,
++  int64_t total_cost_ms)
++{
++  std_msgs::msg::String recovery_context;
++  std::ostringstream payload;
++
++  if (load_result.result.ok && load_result.state.has_value()) {
++    payload
++      << "mode=recovered"
++      << ";task_phase=" << load_result.state->task_phase
++      << ";target_state=" << load_result.state->target_state
++      << ";timestamp_ms=" << load_result.state->timestamp_ms
++      << ";version=" << load_result.state->version;
++  } else {
++    payload
++      << "mode=cold_start"
++      << ";task_phase="
++      << ";target_state="
++      << ";timestamp_ms=0"
++      << ";version=" << supported_state_version_
++      << ";reason=" << normalizeToken(load_result.result.message);
++  }
++
++  payload
++    << ";load_ms=" << load_cost_ms
++    << ";map_ms=" << map_cost_ms
++    << ";total_ms=" << total_cost_ms;
++  recovery_context.data = payload.str();
++
++  {
++    std::lock_guard<std::mutex> lock(recovery_context_mutex_);
++    last_recovery_context_payload_ = recovery_context.data;
++  }
++
++  recovery_context_pub_->publish(recovery_context);
++  RCLCPP_INFO(
++    get_logger(),
++    "recovery_context_published topic=%s payload=%s",
++    recovery_context_topic_.c_str(),
++    recovery_context.data.c_str());
++}
++
+ void LifecycleNode::degradeTimeoutCallback(uint64_t request_id)
+ {
+   std::lock_guard<std::mutex> lock(breaker_mutex_);
+diff --git a/src/dog_lifecycle/test/test_lifecycle_node.cpp b/src/dog_lifecycle/test/test_lifecycle_node.cpp
+index 30cfc3e..f803ec4 100644
+--- a/src/dog_lifecycle/test/test_lifecycle_node.cpp
++++ b/src/dog_lifecycle/test/test_lifecycle_node.cpp
+@@ -1,7 +1,9 @@
+ #include "dog_lifecycle/lifecycle_node.hpp"
+ 
+ #include <chrono>
++#include <filesystem>
+ #include <functional>
++#include <fstream>
+ #include <memory>
+ #include <string>
+ #include <thread>
+@@ -38,6 +40,21 @@ bool waitUntil(
+   return condition();
+ }
+ 
++std::string extractPayloadValue(const std::string & payload, const std::string & key)
++{
++  const auto token = key + "=";
++  const auto begin = payload.find(token);
++  if (begin == std::string::npos) {
++    return "";
++  }
++  const auto value_begin = begin + token.size();
++  const auto value_end = payload.find(';', value_begin);
++  if (value_end == std::string::npos) {
++    return payload.substr(value_begin);
++  }
++  return payload.substr(value_begin, value_end - value_begin);
++}
++
+ }  // namespace
+ 
+ class LifecycleNodeTest : public ::testing::Test
+@@ -209,4 +226,221 @@ TEST_F(LifecycleNodeTest, ResetWindowClearsCounterAndAvoidsFalseTrigger)
+   executor.remove_node(io_node);
+   executor.remove_node(lifecycle_node);
+   (void)degrade_sub;
++}
++
++TEST_F(LifecycleNodeTest, StartupPublishesRecoveredContextFromValidState)
++{
++  namespace fs = std::filesystem;
++
++  const auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
++  const auto test_dir = fs::temp_directory_path() / ("dog_lifecycle_recover_valid_" + std::to_string(now_ns));
++  const auto state_file = test_dir / "state.yaml";
++  const auto backup_file = test_dir / "state.bak.yaml";
++  fs::create_directories(test_dir);
++
++  {
++    std::ofstream ofs(state_file);
++    ofs << "task_phase: deliver_box\n";
++    ofs << "timestamp_ms: 123456\n";
++    ofs << "target_state: done\n";
++    ofs << "version: 1\n";
++  }
++
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_valid";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("persistence.state_file_path", state_file.string());
++  options.append_parameter_override("persistence.backup_file_path", backup_file.string());
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++
++  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_recovery_valid_io");
++
++  std::string last_recovery_payload;
++  auto recovery_sub = io_node->create_subscription<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal),
++    [&last_recovery_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
++      last_recovery_payload = msg->data;
++    });
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(lifecycle_node);
++  executor.add_node(io_node);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
++    return !last_recovery_payload.empty();
++  }));
++
++  EXPECT_NE(last_recovery_payload.find("mode=recovered"), std::string::npos);
++  EXPECT_NE(last_recovery_payload.find("task_phase=deliver_box"), std::string::npos);
++  EXPECT_NE(last_recovery_payload.find("target_state=done"), std::string::npos);
++
++  executor.remove_node(io_node);
++  executor.remove_node(lifecycle_node);
++  (void)recovery_sub;
++  fs::remove_all(test_dir);
++}
++
++TEST_F(LifecycleNodeTest, StartupFallsBackToBackupWhenPrimaryIsCorrupted)
++{
++  namespace fs = std::filesystem;
++
++  const auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
++  const auto test_dir = fs::temp_directory_path() / ("dog_lifecycle_recover_backup_" + std::to_string(now_ns));
++  const auto state_file = test_dir / "state.yaml";
++  const auto backup_file = test_dir / "state.bak.yaml";
++  fs::create_directories(test_dir);
++
++  {
++    std::ofstream ofs(state_file);
++    ofs << "task_phase: [invalid\n";
++  }
++  {
++    std::ofstream ofs(backup_file);
++    ofs << "task_phase: phase_from_backup\n";
++    ofs << "timestamp_ms: 223344\n";
++    ofs << "target_state: done\n";
++    ofs << "version: 1\n";
++  }
++
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_backup";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("persistence.state_file_path", state_file.string());
++  options.append_parameter_override("persistence.backup_file_path", backup_file.string());
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++
++  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_recovery_backup_io");
++
++  std::string last_recovery_payload;
++  auto recovery_sub = io_node->create_subscription<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal),
++    [&last_recovery_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
++      last_recovery_payload = msg->data;
++    });
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(lifecycle_node);
++  executor.add_node(io_node);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
++    return !last_recovery_payload.empty();
++  }));
++
++  EXPECT_NE(last_recovery_payload.find("mode=recovered"), std::string::npos);
++  EXPECT_NE(last_recovery_payload.find("task_phase=phase_from_backup"), std::string::npos);
++
++  executor.remove_node(io_node);
++  executor.remove_node(lifecycle_node);
++  (void)recovery_sub;
++  fs::remove_all(test_dir);
++}
++
++TEST_F(LifecycleNodeTest, StartupPublishesColdStartWhenStateMissing)
++{
++  namespace fs = std::filesystem;
++
++  const auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
++  const auto test_dir = fs::temp_directory_path() / ("dog_lifecycle_recover_cold_" + std::to_string(now_ns));
++  const auto state_file = test_dir / "state.yaml";
++  const auto backup_file = test_dir / "state.bak.yaml";
++  fs::create_directories(test_dir);
++
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_cold";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("persistence.state_file_path", state_file.string());
++  options.append_parameter_override("persistence.backup_file_path", backup_file.string());
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++
++  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_recovery_cold_io");
++
++  std::string last_recovery_payload;
++  auto recovery_sub = io_node->create_subscription<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal),
++    [&last_recovery_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
++      last_recovery_payload = msg->data;
++    });
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(lifecycle_node);
++  executor.add_node(io_node);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
++    return !last_recovery_payload.empty();
++  }));
++
++  EXPECT_NE(last_recovery_payload.find("mode=cold_start"), std::string::npos);
++
++  executor.remove_node(io_node);
++  executor.remove_node(lifecycle_node);
++  (void)recovery_sub;
++  fs::remove_all(test_dir);
++}
++
++TEST_F(LifecycleNodeTest, StartupRecoveryLatencyIsWithinTwoSeconds)
++{
++  namespace fs = std::filesystem;
++
++  const auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
++  const auto test_dir = fs::temp_directory_path() / ("dog_lifecycle_recover_latency_" + std::to_string(now_ns));
++  const auto state_file = test_dir / "state.yaml";
++  const auto backup_file = test_dir / "state.bak.yaml";
++  fs::create_directories(test_dir);
++
++  {
++    std::ofstream ofs(state_file);
++    ofs << "task_phase: latency_task\n";
++    ofs << "timestamp_ms: 998877\n";
++    ofs << "target_state: done\n";
++    ofs << "version: 1\n";
++  }
++
++  const std::string recovery_topic = "/test/lifecycle/recovery_context_latency";
++
++  rclcpp::NodeOptions options;
++  options.append_parameter_override("persistence.state_file_path", state_file.string());
++  options.append_parameter_override("persistence.backup_file_path", backup_file.string());
++  options.append_parameter_override("recovery_context_topic", recovery_topic);
++
++  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
++  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_recovery_latency_io");
++
++  std::string last_recovery_payload;
++  auto recovery_sub = io_node->create_subscription<std_msgs::msg::String>(
++    recovery_topic,
++    rclcpp::QoS(rclcpp::KeepLast(1))
++    .reliability(rclcpp::ReliabilityPolicy::Reliable)
++    .durability(rclcpp::DurabilityPolicy::TransientLocal),
++    [&last_recovery_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
++      last_recovery_payload = msg->data;
++    });
++
++  rclcpp::executors::SingleThreadedExecutor executor;
++  executor.add_node(lifecycle_node);
++  executor.add_node(io_node);
++
++  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
++    return !last_recovery_payload.empty();
++  }));
++
++  const auto total_ms_value = extractPayloadValue(last_recovery_payload, "total_ms");
++  ASSERT_FALSE(total_ms_value.empty());
++  EXPECT_LT(std::stoll(total_ms_value), 2000);
++
++  executor.remove_node(io_node);
++  executor.remove_node(lifecycle_node);
++  (void)recovery_sub;
++  fs::remove_all(test_dir);
+ }
+\ No newline at end of file

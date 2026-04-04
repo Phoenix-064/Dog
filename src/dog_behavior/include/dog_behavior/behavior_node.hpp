@@ -9,6 +9,7 @@
 #include <std_msgs/msg/string.hpp>
 
 #include <mutex>
+#include <unordered_set>
 
 namespace dog_behavior
 {
@@ -21,6 +22,7 @@ public:
 
   bool triggerExecuteBehavior(const std::string & behavior_name);
   std::string getExecutionState() const;
+  bool IsTaskPhaseRecoveredForTest(const std::string & task_phase) const;
 
 private:
   using ExecuteBehavior = dog_interfaces::action::ExecuteBehavior;
@@ -41,6 +43,7 @@ private:
 
   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
   void executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void actionServerWaitTimerCallback();
   void feedbackWatchdogTimerCallback();
   void goalResponseCallback(ExecuteBehaviorGoalHandle::SharedPtr goal_handle);
@@ -50,12 +53,16 @@ private:
   void resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result);
   bool canSendGoalLocked() const;
   std::string executionStateToString(ExecutionState state) const;
+  static std::string normalizeToken(const std::string & value);
+  static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
+  bool isCompletedState(const std::string & target_state) const;
   bool isFinitePose(const geometry_msgs::msg::Pose & pose) const;
   bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
 
   std::string default_frame_id_;
   std::string execute_behavior_action_name_;
   std::string execute_behavior_trigger_topic_;
+  std::string recovery_context_topic_;
   double action_server_wait_timeout_sec_;
   double feedback_timeout_sec_;
 
@@ -65,12 +72,14 @@ private:
   bool action_goal_pending_;
   bool action_goal_active_;
   bool has_latest_pose_;
+  std::unordered_set<std::string> recovered_completed_task_phases_;
   geometry_msgs::msg::PoseStamped latest_pose_;
   rclcpp::Time action_server_wait_start_time_;
   rclcpp::Time last_feedback_time_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr execute_trigger_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr recovery_context_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr global_pose_pub_;
   rclcpp::TimerBase::SharedPtr action_server_wait_timer_;
   rclcpp::TimerBase::SharedPtr feedback_watchdog_timer_;

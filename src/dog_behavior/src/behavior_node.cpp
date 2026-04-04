@@ -1,12 +1,57 @@
 #include "dog_behavior/behavior_node.hpp"
 
 #include <cmath>
+#include <cctype>
 #include <chrono>
 #include <functional>
 #include <utility>
 
 namespace dog_behavior
 {
+
+namespace
+{
+
+int hexDigitValue(const char c)
+{
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return 10 + (c - 'a');
+  }
+  if (c >= 'A' && c <= 'F') {
+    return 10 + (c - 'A');
+  }
+  return -1;
+}
+
+std::string percentDecode(const std::string & value)
+{
+  std::string decoded;
+  decoded.reserve(value.size());
+
+  size_t index = 0;
+  while (index < value.size()) {
+    if (value[index] == '%' && (index + 2) < value.size()) {
+      const auto high = hexDigitValue(value[index + 1]);
+      const auto low = hexDigitValue(value[index + 2]);
+      if (high >= 0 && low >= 0) {
+        const auto byte_value = static_cast<unsigned char>((high << 4) | low);
+        decoded.push_back(static_cast<char>(byte_value));
+        index += 3;
+        continue;
+      }
+    }
+
+    decoded.push_back(value[index]);
+    ++index;
+  }
+
+  return decoded;
+}
+
+}  // namespace
 
 BehaviorNode::BehaviorNode()
 : BehaviorNode(rclcpp::NodeOptions())
@@ -30,6 +75,9 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
   execute_behavior_trigger_topic_ = declare_parameter<std::string>(
     "execute_behavior_trigger_topic",
     "/behavior/execute_trigger");
+  recovery_context_topic_ = declare_parameter<std::string>(
+    "recovery_context_topic",
+    "/lifecycle/recovery_context");
   action_server_wait_timeout_sec_ = declare_parameter<double>("action_server_wait_timeout_sec", 5.0);
   feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 2.0);
 
@@ -71,6 +119,13 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
     std::bind(&BehaviorNode::executeTriggerCallback, this, std::placeholders::_1));
 
+  recovery_context_sub_ = create_subscription<std_msgs::msg::String>(
+    recovery_context_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal),
+    std::bind(&BehaviorNode::recoveryContextCallback, this, std::placeholders::_1));
+
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     execution_state_ = ExecutionState::kWaitingServer;
@@ -87,12 +142,13 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     get_logger(),
-    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s",
+    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s",
     localization_topic.c_str(),
     global_pose_topic.c_str(),
     default_frame_id_.c_str(),
     execute_behavior_action_name_.c_str(),
-    execute_behavior_trigger_topic_.c_str());
+    execute_behavior_trigger_topic_.c_str(),
+    recovery_context_topic_.c_str());
 }
 
 void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -165,6 +221,46 @@ void BehaviorNode::executeTriggerCallback(const std_msgs::msg::String::ConstShar
   }
 }
 
+void BehaviorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
+  const auto task_phase = normalizeToken(parseKeyValuePayload(msg->data, "task_phase"));
+  const auto target_state = normalizeToken(parseKeyValuePayload(msg->data, "target_state"));
+
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (mode == "cold_start") {
+    recovered_completed_task_phases_.clear();
+    RCLCPP_INFO(get_logger(), "recovery_context_cold_start_received, cleared recovered task filters");
+    return;
+  }
+
+  if (mode != "recovered") {
+    RCLCPP_WARN(get_logger(), "ignore unknown recovery mode: %s", mode.c_str());
+    return;
+  }
+
+  if (task_phase.empty()) {
+    RCLCPP_WARN(get_logger(), "ignore recovered context with empty task_phase");
+    return;
+  }
+
+  if (!isCompletedState(target_state)) {
+    recovered_completed_task_phases_.erase(task_phase);
+    RCLCPP_INFO(
+      get_logger(),
+      "recovered task remains executable, task_phase=%s target_state=%s, removed from recovered block list",
+      task_phase.c_str(),
+      target_state.c_str());
+    return;
+  }
+
+  recovered_completed_task_phases_.insert(task_phase);
+  RCLCPP_INFO(
+    get_logger(),
+    "recovered completed task phase is blocked from re-execution: %s",
+    task_phase.c_str());
+}
+
 void BehaviorNode::actionServerWaitTimerCallback()
 {
   if (execute_behavior_client_->wait_for_action_server(std::chrono::seconds(0))) {
@@ -230,9 +326,21 @@ void BehaviorNode::feedbackWatchdogTimerCallback()
 
 bool BehaviorNode::triggerExecuteBehavior(const std::string & behavior_name)
 {
+  const auto normalized_behavior_name = normalizeToken(behavior_name);
   ExecuteBehavior::Goal goal;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    if (
+      !normalized_behavior_name.empty() &&
+      recovered_completed_task_phases_.find(normalized_behavior_name) != recovered_completed_task_phases_.end())
+    {
+      RCLCPP_INFO(
+        get_logger(),
+        "skip execute behavior due to recovered completed task phase=%s",
+        normalized_behavior_name.c_str());
+      return false;
+    }
+
     if (!canSendGoalLocked()) {
       RCLCPP_WARN(
         get_logger(),
@@ -386,6 +494,13 @@ bool BehaviorNode::canSendGoalLocked() const
   return true;
 }
 
+bool BehaviorNode::IsTaskPhaseRecoveredForTest(const std::string & task_phase) const
+{
+  const auto normalized_task_phase = normalizeToken(task_phase);
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return recovered_completed_task_phases_.find(normalized_task_phase) != recovered_completed_task_phases_.end();
+}
+
 std::string BehaviorNode::getExecutionState() const
 {
   std::lock_guard<std::mutex> lock(state_mutex_);
@@ -416,6 +531,51 @@ std::string BehaviorNode::executionStateToString(ExecutionState state) const
     default:
       return "unknown";
   }
+}
+
+std::string BehaviorNode::normalizeToken(const std::string & value)
+{
+  std::string normalized;
+  normalized.reserve(value.size());
+  for (const auto ch : value) {
+    if (std::isspace(static_cast<unsigned char>(ch))) {
+      continue;
+    }
+    normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  return normalized;
+}
+
+std::string BehaviorNode::parseKeyValuePayload(const std::string & payload, const std::string & key)
+{
+  static const std::string delimiter = ";";
+  const auto normalized_key = normalizeToken(key);
+
+  size_t start = 0;
+  while (start <= payload.size()) {
+    const auto end = payload.find(delimiter, start);
+    const auto token = payload.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    const auto equal_pos = token.find('=');
+    if (equal_pos != std::string::npos) {
+      const auto token_key = normalizeToken(token.substr(0, equal_pos));
+      if (token_key == normalized_key) {
+        return percentDecode(token.substr(equal_pos + 1));
+      }
+    }
+
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+
+  return "";
+}
+
+bool BehaviorNode::isCompletedState(const std::string & target_state) const
+{
+  return target_state == "done" || target_state == "completed" || target_state == "succeeded" ||
+         target_state == "success" || target_state == "finished";
 }
 
 bool BehaviorNode::isFinitePose(const geometry_msgs::msg::Pose & pose) const

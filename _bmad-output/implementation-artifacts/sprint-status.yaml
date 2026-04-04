@@ -60,7 +60,7 @@ development_status:
   4-1-感知算法动态工厂与热插拔注入: done
   epic-4-retrospective: optional
   epic-5: in-progress
-  5-1-yaml-断电进度恢复读取与重启重建: ready-for-dev
+  5-1-yaml-断电进度恢复读取与重启重建: done
   5-2-单侧丢帧先验外推补偿与急停空转: backlog
   5-3-节点假死心跳健康守护重联: backlog
   epic-5-retrospective: optional
