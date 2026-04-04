@@ -64,6 +64,8 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 , action_server_ready_(false)
 , action_goal_pending_(false)
 , action_goal_active_(false)
+, cancel_due_to_idle_spinning_(false)
+, idle_spinning_mode_active_(false)
 , has_latest_pose_(false)
 {
   const auto global_pose_topic = declare_parameter<std::string>("global_pose_topic", "/dog/global_pose");
@@ -78,6 +80,9 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
   recovery_context_topic_ = declare_parameter<std::string>(
     "recovery_context_topic",
     "/lifecycle/recovery_context");
+  system_mode_topic_ = declare_parameter<std::string>(
+    "system_mode_topic",
+    "/lifecycle/system_mode");
   action_server_wait_timeout_sec_ = declare_parameter<double>("action_server_wait_timeout_sec", 5.0);
   feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 2.0);
 
@@ -125,6 +130,12 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
     .reliability(rclcpp::ReliabilityPolicy::Reliable)
     .durability(rclcpp::DurabilityPolicy::TransientLocal),
     std::bind(&BehaviorNode::recoveryContextCallback, this, std::placeholders::_1));
+  system_mode_sub_ = create_subscription<std_msgs::msg::String>(
+    system_mode_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal),
+    std::bind(&BehaviorNode::systemModeCallback, this, std::placeholders::_1));
 
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -142,13 +153,14 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     get_logger(),
-    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s",
+    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s, system_mode_topic=%s",
     localization_topic.c_str(),
     global_pose_topic.c_str(),
     default_frame_id_.c_str(),
     execute_behavior_action_name_.c_str(),
     execute_behavior_trigger_topic_.c_str(),
-    recovery_context_topic_.c_str());
+    recovery_context_topic_.c_str(),
+    system_mode_topic_.c_str());
 }
 
 void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -261,6 +273,47 @@ void BehaviorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSha
     task_phase.c_str());
 }
 
+void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  if (!msg) {
+    return;
+  }
+
+  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
+  if (mode.empty()) {
+    return;
+  }
+
+  const bool is_idle_spinning = (mode == "idle_spinning");
+  ExecuteBehaviorGoalHandle::SharedPtr goal_handle_to_cancel;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (idle_spinning_mode_active_ == is_idle_spinning) {
+      return;
+    }
+
+    idle_spinning_mode_active_ = is_idle_spinning;
+    if (is_idle_spinning && action_goal_active_ && active_goal_handle_) {
+      goal_handle_to_cancel = active_goal_handle_;
+      cancel_due_to_idle_spinning_ = true;
+      action_goal_active_ = false;
+      action_goal_pending_ = false;
+      active_goal_handle_.reset();
+      execution_state_ = ExecutionState::kIdle;
+    }
+  }
+
+  if (goal_handle_to_cancel) {
+    execute_behavior_client_->async_cancel_goal(goal_handle_to_cancel);
+  }
+
+  RCLCPP_WARN(
+    get_logger(),
+    "system_mode_updated mode=%s payload=%s",
+    mode.c_str(),
+    msg->data.c_str());
+}
+
 void BehaviorNode::actionServerWaitTimerCallback()
 {
   if (execute_behavior_client_->wait_for_action_server(std::chrono::seconds(0))) {
@@ -330,6 +383,14 @@ bool BehaviorNode::triggerExecuteBehavior(const std::string & behavior_name)
   ExecuteBehavior::Goal goal;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    if (idle_spinning_mode_active_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "skip execute behavior during idle_spinning mode, behavior_name=%s",
+        behavior_name.c_str());
+      return false;
+    }
+
     if (
       !normalized_behavior_name.empty() &&
       recovered_completed_task_phases_.find(normalized_behavior_name) != recovered_completed_task_phases_.end())
@@ -421,6 +482,8 @@ void BehaviorNode::resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult
   std::lock_guard<std::mutex> lock(state_mutex_);
   const auto previous_state = execution_state_;
   const bool timeout_terminal = (previous_state == ExecutionState::kTimeout);
+  const bool canceled_by_idle = cancel_due_to_idle_spinning_;
+  cancel_due_to_idle_spinning_ = false;
 
   action_goal_pending_ = false;
   action_goal_active_ = false;
@@ -456,7 +519,9 @@ void BehaviorNode::resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult
         result_detail);
       break;
     case rclcpp_action::ResultCode::CANCELED:
-      if (timeout_terminal) {
+      if (canceled_by_idle) {
+        execution_state_ = ExecutionState::kIdle;
+      } else if (timeout_terminal) {
         execution_state_ = ExecutionState::kTimeout;
       } else {
         execution_state_ = ExecutionState::kFailed;
@@ -499,6 +564,12 @@ bool BehaviorNode::IsTaskPhaseRecoveredForTest(const std::string & task_phase) c
   const auto normalized_task_phase = normalizeToken(task_phase);
   std::lock_guard<std::mutex> lock(state_mutex_);
   return recovered_completed_task_phases_.find(normalized_task_phase) != recovered_completed_task_phases_.end();
+}
+
+bool BehaviorNode::IsIdleSpinningForTest() const
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return idle_spinning_mode_active_;
 }
 
 std::string BehaviorNode::getExecutionState() const

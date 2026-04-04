@@ -67,6 +67,8 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
   degrade_ack_topic_ = declare_parameter<std::string>("degrade_ack_topic", "/lifecycle/degrade_ack");
   recovery_context_topic_ = declare_parameter<std::string>(
     "recovery_context_topic", "/lifecycle/recovery_context");
+  estop_topic_ = declare_parameter<std::string>("estop_topic", "/system/estop");
+  system_mode_topic_ = declare_parameter<std::string>("system_mode_topic", "/lifecycle/system_mode");
 
   int64_t validated_max_write_bytes = max_write_bytes;
   if (validated_max_write_bytes <= 0) {
@@ -143,6 +145,11 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     rclcpp::QoS(rclcpp::KeepLast(1))
     .reliability(rclcpp::ReliabilityPolicy::Reliable)
     .durability(rclcpp::DurabilityPolicy::TransientLocal));
+  system_mode_pub_ = create_publisher<std_msgs::msg::String>(
+    system_mode_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal));
 
   const auto load_start = std::chrono::steady_clock::now();
   const auto load_result = state_store_->Load();
@@ -181,12 +188,20 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     degrade_ack_topic_,
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
     std::bind(&LifecycleNode::degradeAckCallback, this, std::placeholders::_1));
+  estop_sub_ = create_subscription<std_msgs::msg::String>(
+    estop_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    std::bind(&LifecycleNode::estopCallback, this, std::placeholders::_1));
+
+  publishSystemMode("normal", "startup_default");
 
   RCLCPP_INFO(
     get_logger(),
-    "dog_lifecycle initialized, feedback_topic=%s, degrade_topic=%s, threshold=%ld, degrade_timeout_ms=%ld, reset_window_ms=%ld, dedup_window_ms=%ld",
+    "dog_lifecycle initialized, feedback_topic=%s, degrade_topic=%s, estop_topic=%s, mode_topic=%s, threshold=%ld, degrade_timeout_ms=%ld, reset_window_ms=%ld, dedup_window_ms=%ld",
     grasp_feedback_topic_.c_str(),
     degrade_command_topic_.c_str(),
+    estop_topic_.c_str(),
+    system_mode_topic_.c_str(),
     empty_grasp_threshold_,
     degrade_timeout_ms_,
     breaker_reset_window_ms_,
@@ -291,6 +306,18 @@ std::string LifecycleNode::GetLastRecoveryContextForTest() const
   return last_recovery_context_payload_;
 }
 
+bool LifecycleNode::IsIdleSpinningForTest() const
+{
+  std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+  return idle_spinning_active_;
+}
+
+std::string LifecycleNode::GetLastSystemModePayloadForTest() const
+{
+  std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+  return last_system_mode_payload_;
+}
+
 void LifecycleNode::graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg)
 {
   const auto event = parseGraspFeedback(msg->data, now());
@@ -340,6 +367,43 @@ void LifecycleNode::degradeAckCallback(const std_msgs::msg::String::ConstSharedP
     msg->data.c_str());
 }
 
+void LifecycleNode::estopCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  if (!msg) {
+    return;
+  }
+
+  const auto estop_active = parseEstopActive(msg->data);
+  if (!estop_active.has_value()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "ignore ambiguous estop payload=%s",
+      msg->data.c_str());
+    return;
+  }
+
+  bool should_publish = false;
+
+  {
+    std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+    if (estop_active.value() == idle_spinning_active_) {
+      return;
+    }
+    idle_spinning_active_ = estop_active.value();
+    should_publish = true;
+  }
+
+  if (!should_publish) {
+    return;
+  }
+
+  if (estop_active.value()) {
+    publishSystemMode("idle_spinning", "estop_triggered");
+  } else {
+    publishSystemMode("normal", "estop_released");
+  }
+}
+
 LifecycleNode::DegradeAckEvent LifecycleNode::parseDegradeAck(const std::string & payload) const
 {
   DegradeAckEvent event;
@@ -362,6 +426,49 @@ LifecycleNode::DegradeAckEvent LifecycleNode::parseDegradeAck(const std::string 
   }
 
   return event;
+}
+
+std::optional<bool> LifecycleNode::parseEstopActive(const std::string & payload) const
+{
+  const auto normalized_payload = normalizeToken(payload);
+  const auto active_token = parseKeyValuePayload(payload, "active");
+  if (!active_token.empty()) {
+    if (active_token == "1" || active_token == "true" || active_token == "on" ||
+      active_token == "pressed")
+    {
+      return true;
+    }
+    if (active_token == "0" || active_token == "false" || active_token == "off" ||
+      active_token == "released" || active_token == "clear")
+    {
+      return false;
+    }
+    return std::nullopt;
+  }
+
+  if (normalized_payload == "1" || normalized_payload == "true" ||
+    normalized_payload == "on" || normalized_payload == "pressed" ||
+    normalized_payload == "estop" || normalized_payload == "emergency_stop")
+  {
+    return true;
+  }
+
+  if (normalized_payload == "0" || normalized_payload == "false" ||
+    normalized_payload == "off" || normalized_payload == "released" ||
+    normalized_payload == "clear")
+  {
+    return false;
+  }
+
+  const auto mode_token = parseKeyValuePayload(payload, "mode");
+  if (mode_token == "estop" || mode_token == "idle_spinning") {
+    return true;
+  }
+  if (mode_token == "normal") {
+    return false;
+  }
+
+  return std::nullopt;
 }
 
 LifecycleNode::GraspFeedbackEvent LifecycleNode::parseGraspFeedback(
@@ -648,6 +755,25 @@ void LifecycleNode::degradeTimeoutCallback(uint64_t request_id)
   if (degrade_timeout_timer_) {
     degrade_timeout_timer_->cancel();
   }
+}
+
+void LifecycleNode::publishSystemMode(const std::string & mode, const char * reason)
+{
+  std_msgs::msg::String mode_message;
+  mode_message.data = "mode=" + mode + ";reason=" + std::string(reason);
+
+  {
+    std::lock_guard<std::mutex> lock(recovery_context_mutex_);
+    last_system_mode_payload_ = mode_message.data;
+  }
+
+  system_mode_pub_->publish(mode_message);
+  RCLCPP_WARN(
+    get_logger(),
+    "system_mode_published mode=%s reason=%s payload=%s",
+    mode.c_str(),
+    reason,
+    mode_message.data.c_str());
 }
 
 const char * LifecycleNode::feedbackTypeToString(GraspFeedbackType type)

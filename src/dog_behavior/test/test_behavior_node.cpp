@@ -807,3 +807,93 @@ TEST_F(BehaviorNodeTest, ContinuesUnfinishedRecoveredTaskPhase)
   executor.remove_node(io_node);
   executor.remove_node(behavior_node);
 }
+
+TEST_F(BehaviorNodeTest, IdleSpinningModeBlocksNewGoalAndKeepsRecoveredContext)
+{
+  const std::string odom_topic = "/test/localization/idle_spinning";
+  const std::string pose_topic = "/test/global_pose/idle_spinning";
+  const std::string action_name = "/test/behavior/execute_idle_spinning";
+  const std::string recovery_topic = "/test/lifecycle/recovery_context_idle_spinning";
+  const std::string system_mode_topic = "/test/lifecycle/system_mode_idle_spinning";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("global_pose_topic", pose_topic);
+  options.append_parameter_override("localization_topic", odom_topic);
+  options.append_parameter_override("default_frame_id", "map");
+  options.append_parameter_override("execute_behavior_action_name", action_name);
+  options.append_parameter_override("recovery_context_topic", recovery_topic);
+  options.append_parameter_override("system_mode_topic", system_mode_topic);
+  options.append_parameter_override("action_server_wait_timeout_sec", 2.0);
+
+  auto behavior_node = std::make_shared<dog_behavior::BehaviorNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("behavior_test_io_idle_spinning");
+  auto action_server = std::make_shared<MockExecuteBehaviorServer>(
+    action_name,
+    false,
+    MockExecuteBehaviorServer::ResponseMode::kSucceed);
+
+  auto odom_pub = io_node->create_publisher<nav_msgs::msg::Odometry>(
+    odom_topic,
+    rclcpp::SensorDataQoS().keep_last(20));
+  auto recovery_pub = io_node->create_publisher<std_msgs::msg::String>(
+    recovery_topic,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal));
+  auto mode_pub = io_node->create_publisher<std_msgs::msg::String>(
+    system_mode_topic,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(behavior_node);
+  executor.add_node(io_node);
+  executor.add_node(action_server);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1200), [&behavior_node]() {
+    return behavior_node->getExecutionState() == "idle";
+  }));
+
+  nav_msgs::msg::Odometry odom;
+  odom.header.stamp = behavior_node->now();
+  odom.header.frame_id = "map";
+  odom.pose.pose.orientation.w = 1.0;
+  odom_pub->publish(odom);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  std_msgs::msg::String recovery;
+  recovery.data = "mode=recovered;task_phase=deliver_box;target_state=done;timestamp_ms=100;version=1";
+  recovery_pub->publish(recovery);
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&behavior_node]() {
+    return behavior_node->IsTaskPhaseRecoveredForTest("deliver_box");
+  }));
+
+  std_msgs::msg::String mode;
+  mode.data = "mode=idle_spinning;reason=test";
+  mode_pub->publish(mode);
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&behavior_node]() {
+    return behavior_node->IsIdleSpinningForTest();
+  }));
+
+  EXPECT_FALSE(behavior_node->triggerExecuteBehavior("walk"));
+  spinFor(executor, std::chrono::milliseconds(120));
+  EXPECT_EQ(action_server->goalCount(), 0);
+  EXPECT_TRUE(behavior_node->IsTaskPhaseRecoveredForTest("deliver_box"));
+
+  mode.data = "mode=normal;reason=test_resume";
+  mode_pub->publish(mode);
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&behavior_node]() {
+    return !behavior_node->IsIdleSpinningForTest();
+  }));
+
+  EXPECT_TRUE(behavior_node->triggerExecuteBehavior("walk"));
+  ASSERT_TRUE(waitUntil(executor, std::chrono::seconds(2), [&behavior_node]() {
+    return behavior_node->getExecutionState() == "succeeded";
+  }));
+  EXPECT_EQ(action_server->goalCount(), 1);
+
+  executor.remove_node(action_server);
+  executor.remove_node(io_node);
+  executor.remove_node(behavior_node);
+}

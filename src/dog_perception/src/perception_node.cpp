@@ -2,10 +2,14 @@
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rmw/qos_profiles.h>
+#include <std_msgs/msg/string.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <stdexcept>
 #include <string_view>
@@ -158,6 +162,11 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , stale_frame_timeout_ms_(50)
 , max_future_skew_ms_(5)
 , frame_cache_size_(8)
+, single_side_dropout_timeout_ms_(150)
+, extrapolation_watchdog_ms_(20)
+, extrapolation_max_window_ms_(300)
+, extrapolation_min_interval_ms_(40)
+, idle_spinning_publish_ms_(200)
 , digit_roi_x_(0)
 , digit_roi_y_(0)
 , digit_roi_width_(64)
@@ -168,10 +177,21 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , digit_temporal_window_(5)
 , digit_temporal_confirm_count_(2)
 , qos_compatible_(true)
+, idle_spinning_mode_(false)
+, extrapolation_active_(false)
+, has_last_image_stamp_(false)
+, has_last_pointcloud_stamp_(false)
+, has_last_extrapolation_pub_time_(false)
+, has_last_idle_publish_time_(false)
+, has_mode_enter_time_(false)
 , dropped_frame_count_(0)
 , solved_frame_count_(0)
 , solve_failure_count_(0)
+, extrapolation_trigger_count_(0)
+, extrapolation_recovery_count_(0)
+, idle_spinning_trigger_count_(0)
 , frame_history_(8)
+, pose_history_(8)
 , latency_samples_ms_(8)
 , end_to_end_latency_samples_ms_(8)
 , digit_label_history_(5)
@@ -185,11 +205,17 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   pointcloud_topic_ = declare_parameter<std::string>("pointcloud_topic", "/livox/lidar");
   target3d_topic_ = declare_parameter<std::string>("target3d_topic", "/target/target_3d");
   digit_result_topic_ = declare_parameter<std::string>("digit_result_topic", "/target/digit_result");
+  lifecycle_mode_topic_ = declare_parameter<std::string>("lifecycle_mode_topic", "/lifecycle/system_mode");
   sync_queue_size_ = declare_parameter<int>("sync_queue_size", 10);
   sync_slop_ms_ = declare_parameter<int>("sync_slop_ms", 25);
   stale_frame_timeout_ms_ = declare_parameter<int>("stale_frame_timeout_ms", 50);
   max_future_skew_ms_ = declare_parameter<int>("max_future_skew_ms", 5);
   frame_cache_size_ = declare_parameter<int>("frame_cache_size", 32);
+  single_side_dropout_timeout_ms_ = declare_parameter<int>("single_side_dropout_timeout_ms", 150);
+  extrapolation_watchdog_ms_ = declare_parameter<int>("extrapolation_watchdog_ms", 20);
+  extrapolation_max_window_ms_ = declare_parameter<int>("extrapolation_max_window_ms", 300);
+  extrapolation_min_interval_ms_ = declare_parameter<int>("extrapolation_min_interval_ms", 40);
+  idle_spinning_publish_ms_ = declare_parameter<int>("idle_spinning_publish_ms", 200);
   qos_reliability_ = declare_parameter<std::string>("qos_reliability", "best_effort");
   solver_type_ = declare_parameter<std::string>("solver_type", "minimal_pnp");
   digit_recognizer_type_ = declare_parameter<std::string>("digit_recognizer_type", "heuristic");
@@ -208,10 +234,13 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 
   if (sync_queue_size_ <= 0 || sync_slop_ms_ <= 0 || stale_frame_timeout_ms_ <= 0 ||
     max_future_skew_ms_ < 0 || frame_cache_size_ <= 0 || digit_temporal_window_ <= 0 ||
+    single_side_dropout_timeout_ms_ <= 0 || extrapolation_watchdog_ms_ <= 0 ||
+    extrapolation_max_window_ms_ <= 0 || extrapolation_min_interval_ms_ <= 0 ||
+    idle_spinning_publish_ms_ <= 0 ||
     digit_temporal_confirm_count_ <= 0)
   {
     throw std::runtime_error(
-            "sync_queue_size, sync_slop_ms, stale_frame_timeout_ms, frame_cache_size, digit_temporal_window and digit_temporal_confirm_count must be > 0, max_future_skew_ms must be >= 0");
+            "invalid positive parameters: sync/slop/stale/cache/temporal/dropout/extrapolation/idle values must be > 0, max_future_skew_ms must be >= 0");
   }
 
   if (sync_queue_size_ > kMaxSyncQueueSize || frame_cache_size_ > kMaxFrameCacheSize ||
@@ -227,6 +256,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   }
 
   frame_history_.set_capacity(static_cast<size_t>(frame_cache_size_));
+  pose_history_.set_capacity(static_cast<size_t>(frame_cache_size_));
   latency_samples_ms_.set_capacity(static_cast<size_t>(frame_cache_size_));
   end_to_end_latency_samples_ms_.set_capacity(static_cast<size_t>(frame_cache_size_));
   digit_label_history_.set_capacity(static_cast<size_t>(digit_temporal_window_));
@@ -254,13 +284,32 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   initializeStaticTransform();
   setupSynchronizedPipeline();
 
+  image_stamp_sub_ = create_subscription<sensor_msgs::msg::Image>(
+    image_topic_,
+    rclcpp::SensorDataQoS(),
+    std::bind(&PerceptionNode::imageStampCallback, this, std::placeholders::_1));
+  pointcloud_stamp_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+    pointcloud_topic_,
+    rclcpp::SensorDataQoS(),
+    std::bind(&PerceptionNode::pointcloudStampCallback, this, std::placeholders::_1));
+  lifecycle_mode_sub_ = create_subscription<std_msgs::msg::String>(
+    lifecycle_mode_topic_,
+    rclcpp::QoS(rclcpp::KeepLast(1))
+    .reliability(rclcpp::ReliabilityPolicy::Reliable)
+    .durability(rclcpp::DurabilityPolicy::TransientLocal),
+    std::bind(&PerceptionNode::lifecycleModeCallback, this, std::placeholders::_1));
+  watchdog_timer_ = create_wall_timer(
+    std::chrono::milliseconds(extrapolation_watchdog_ms_),
+    std::bind(&PerceptionNode::watchdogCallback, this));
+
   RCLCPP_INFO(
     get_logger(),
-    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, digit_result_topic=%s, extrinsics_yaml_path=%s",
+    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, digit_result_topic=%s, mode_topic=%s, extrinsics_yaml_path=%s",
     image_topic_.c_str(),
     pointcloud_topic_.c_str(),
     target3d_topic_.c_str(),
     digit_result_topic_.c_str(),
+    lifecycle_mode_topic_.c_str(),
     extrinsics_yaml_path_.c_str());
 }
 
@@ -397,6 +446,13 @@ void PerceptionNode::synchronizedCallback(
   const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg)
 {
   const auto begin = now();
+  imageStampCallback(image_msg);
+  pointcloudStampCallback(pointcloud_msg);
+
+  if (idle_spinning_mode_) {
+    frame_history_.push_back(FrameState{begin, 0.0, false});
+    return;
+  }
 
   qos_compatible_ = evaluateRuntimeQosCompatibility();
   if (!qos_compatible_) {
@@ -471,9 +527,225 @@ void PerceptionNode::synchronizedCallback(
   latency_samples_ms_.push_back(elapsed_ms);
   end_to_end_latency_samples_ms_.push_back(end_to_end_latency_ms);
   ++solved_frame_count_;
+  pose_history_.push_back(PoseState{end, *target3d_msg});
+
+  if (extrapolation_active_) {
+    extrapolation_active_ = false;
+    ++extrapolation_recovery_count_;
+    RCLCPP_INFO(
+      get_logger(),
+      "dropout recovered, switching back to synchronized solving");
+  }
+
   frame_history_.push_back(FrameState{end, elapsed_ms, true});
 
   target3d_pub_->publish(std::move(target3d_msg));
+}
+
+void PerceptionNode::imageStampCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
+{
+  if (!image_msg) {
+    return;
+  }
+  last_image_stamp_ = rclcpp::Time(image_msg->header.stamp);
+  last_image_receive_time_ = now();
+  has_last_image_stamp_ = true;
+}
+
+void PerceptionNode::pointcloudStampCallback(
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg)
+{
+  if (!pointcloud_msg) {
+    return;
+  }
+  last_pointcloud_stamp_ = rclcpp::Time(pointcloud_msg->header.stamp);
+  last_pointcloud_receive_time_ = now();
+  has_last_pointcloud_stamp_ = true;
+}
+
+void PerceptionNode::lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg)
+{
+  if (!msg) {
+    return;
+  }
+
+  const auto payload = msg->data;
+  const auto mode_position = payload.find("mode=");
+  if (mode_position == std::string::npos) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "ignore lifecycle mode payload without mode key: %s",
+      payload.c_str());
+    return;
+  }
+
+  const auto value_start = mode_position + 5;
+  const auto value_end = payload.find(';', value_start);
+  std::string mode_token = payload.substr(
+    value_start,
+    value_end == std::string::npos ? std::string::npos : value_end - value_start);
+
+  std::transform(
+    mode_token.begin(), mode_token.end(), mode_token.begin(),
+    [](unsigned char c) {return static_cast<char>(std::tolower(c));});
+
+  if (mode_token != "idle_spinning" && mode_token != "normal") {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "ignore unknown lifecycle mode=%s payload=%s",
+      mode_token.c_str(),
+      payload.c_str());
+    return;
+  }
+
+  const bool to_idle_spinning = (mode_token == "idle_spinning");
+  if (to_idle_spinning == idle_spinning_mode_) {
+    return;
+  }
+
+  const auto switch_time = now();
+  idle_spinning_mode_ = to_idle_spinning;
+
+  if (idle_spinning_mode_) {
+    ++idle_spinning_trigger_count_;
+    has_mode_enter_time_ = true;
+    mode_enter_time_ = switch_time;
+    RCLCPP_WARN(get_logger(), "enter idle_spinning mode, payload=%s", payload.c_str());
+    return;
+  }
+
+  if (has_mode_enter_time_) {
+    const auto duration_ms = (switch_time - mode_enter_time_).nanoseconds() / 1000000;
+    RCLCPP_INFO(
+      get_logger(),
+      "exit idle_spinning mode after %ld ms, payload=%s",
+      duration_ms,
+      payload.c_str());
+    has_mode_enter_time_ = false;
+  }
+}
+
+void PerceptionNode::watchdogCallback()
+{
+  const auto current_time = now();
+
+  if (idle_spinning_mode_) {
+    publishIdleSpinningPose(current_time);
+    return;
+  }
+
+  std::string reason;
+  if (!shouldTriggerExtrapolation(current_time, reason)) {
+    return;
+  }
+
+  (void)publishExtrapolatedTarget(current_time, reason);
+}
+
+bool PerceptionNode::shouldTriggerExtrapolation(
+  const rclcpp::Time & current_time,
+  std::string & reason) const
+{
+  if (!has_last_image_stamp_ || !has_last_pointcloud_stamp_) {
+    return false;
+  }
+
+  const auto image_gap_ms = (current_time - last_image_receive_time_).nanoseconds() / 1000000;
+  const auto pointcloud_gap_ms = (current_time - last_pointcloud_receive_time_).nanoseconds() / 1000000;
+  const auto stamp_delta_ms =
+    std::llabs((last_image_stamp_ - last_pointcloud_stamp_).nanoseconds()) / 1000000;
+
+  const bool one_side_stream_timeout =
+    (image_gap_ms > single_side_dropout_timeout_ms_ &&
+    pointcloud_gap_ms <= single_side_dropout_timeout_ms_) ||
+    (pointcloud_gap_ms > single_side_dropout_timeout_ms_ &&
+    image_gap_ms <= single_side_dropout_timeout_ms_);
+  const bool stamp_skew_timeout = stamp_delta_ms > single_side_dropout_timeout_ms_;
+
+  if (!one_side_stream_timeout && !stamp_skew_timeout) {
+    return false;
+  }
+
+  if (has_last_extrapolation_pub_time_) {
+    const auto since_last_pub_ms = (current_time - last_extrapolation_pub_time_).nanoseconds() / 1000000;
+    if (since_last_pub_ms < extrapolation_min_interval_ms_) {
+      return false;
+    }
+  }
+
+  reason = one_side_stream_timeout ? "single_side_dropout" : "timestamp_skew";
+  return true;
+}
+
+bool PerceptionNode::publishExtrapolatedTarget(
+  const rclcpp::Time & current_time,
+  const std::string & reason)
+{
+  if (pose_history_.empty()) {
+    return false;
+  }
+
+  dog_interfaces::msg::Target3D extrapolated = pose_history_.back().target;
+  extrapolated.header.stamp = current_time;
+  extrapolated.target_id = "extrapolated_target";
+  extrapolated.confidence = std::max(0.0F, extrapolated.confidence * 0.8F);
+
+  if (pose_history_.size() >= 2) {
+    const auto & previous = pose_history_[pose_history_.size() - 2];
+    const auto & latest = pose_history_.back();
+    const double dt_sec = static_cast<double>((latest.stamp - previous.stamp).nanoseconds()) / 1e9;
+    if (dt_sec > 1e-6) {
+      const double velocity_x = (latest.target.position.x - previous.target.position.x) / dt_sec;
+      const double velocity_y = (latest.target.position.y - previous.target.position.y) / dt_sec;
+      const double velocity_z = (latest.target.position.z - previous.target.position.z) / dt_sec;
+
+      const auto bounded_ns = std::min<int64_t>(
+        (current_time - latest.stamp).nanoseconds(),
+        static_cast<int64_t>(extrapolation_max_window_ms_) * 1000 * 1000);
+      const double prediction_dt_sec = std::max(0.0, static_cast<double>(bounded_ns) / 1e9);
+      extrapolated.position.x = latest.target.position.x + velocity_x * prediction_dt_sec;
+      extrapolated.position.y = latest.target.position.y + velocity_y * prediction_dt_sec;
+      extrapolated.position.z = latest.target.position.z + velocity_z * prediction_dt_sec;
+    }
+  }
+
+  target3d_pub_->publish(extrapolated);
+  extrapolation_active_ = true;
+  ++extrapolation_trigger_count_;
+  has_last_extrapolation_pub_time_ = true;
+  last_extrapolation_pub_time_ = current_time;
+
+  RCLCPP_WARN_THROTTLE(
+    get_logger(),
+    *get_clock(),
+    1000,
+    "published extrapolated target due to %s, trigger_count=%zu",
+    reason.c_str(),
+    extrapolation_trigger_count_);
+  return true;
+}
+
+void PerceptionNode::publishIdleSpinningPose(const rclcpp::Time & current_time)
+{
+  if (has_last_idle_publish_time_) {
+    const auto elapsed_ms = (current_time - last_idle_publish_time_).nanoseconds() / 1000000;
+    if (elapsed_ms < idle_spinning_publish_ms_) {
+      return;
+    }
+  }
+
+  dog_interfaces::msg::Target3D message;
+  message.header.stamp = current_time;
+  message.header.frame_id = camera_extrinsics_.frame_id;
+  message.target_id = "idle_spinning";
+  message.confidence = 0.0F;
+  target3d_pub_->publish(message);
+  has_last_idle_publish_time_ = true;
+  last_idle_publish_time_ = current_time;
 }
 
 void PerceptionNode::processDigitRecognition(
@@ -564,9 +836,29 @@ size_t PerceptionNode::getDigitLatencySampleCount() const
   return digit_latency_samples_ms_.size();
 }
 
+size_t PerceptionNode::getExtrapolationTriggerCount() const
+{
+  return extrapolation_trigger_count_;
+}
+
+size_t PerceptionNode::getExtrapolationRecoveryCount() const
+{
+  return extrapolation_recovery_count_;
+}
+
+size_t PerceptionNode::getIdleSpinningTriggerCount() const
+{
+  return idle_spinning_trigger_count_;
+}
+
 bool PerceptionNode::isQosCompatible() const
 {
   return qos_compatible_;
+}
+
+bool PerceptionNode::isIdleSpinningMode() const
+{
+  return idle_spinning_mode_;
 }
 
 double PerceptionNode::getLatencyP95Ms() const

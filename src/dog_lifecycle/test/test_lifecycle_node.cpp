@@ -228,6 +228,61 @@ TEST_F(LifecycleNodeTest, ResetWindowClearsCounterAndAvoidsFalseTrigger)
   (void)degrade_sub;
 }
 
+TEST_F(LifecycleNodeTest, EstopSwitchesIdleSpinningModeAndRecoversToNormal)
+{
+  const std::string estop_topic = "/test/lifecycle/estop";
+  const std::string system_mode_topic = "/test/lifecycle/system_mode";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("estop_topic", estop_topic);
+  options.append_parameter_override("system_mode_topic", system_mode_topic);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_estop_io");
+  auto estop_pub = io_node->create_publisher<std_msgs::msg::String>(
+    estop_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  std::string latest_mode_payload;
+  auto mode_sub = io_node->create_subscription<std_msgs::msg::String>(
+    system_mode_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&latest_mode_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
+      latest_mode_payload = msg->data;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return io_node->count_subscribers(estop_topic) > 0u;
+  }));
+
+  std_msgs::msg::String estop_on;
+  estop_on.data = "active=true";
+  estop_pub->publish(estop_on);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
+    return lifecycle_node->IsIdleSpinningForTest();
+  }));
+  EXPECT_NE(lifecycle_node->GetLastSystemModePayloadForTest().find("mode=idle_spinning"), std::string::npos);
+
+  std_msgs::msg::String estop_off;
+  estop_off.data = "active=false";
+  estop_pub->publish(estop_off);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
+    return !lifecycle_node->IsIdleSpinningForTest();
+  }));
+  EXPECT_NE(lifecycle_node->GetLastSystemModePayloadForTest().find("mode=normal"), std::string::npos);
+  EXPECT_FALSE(latest_mode_payload.empty());
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)mode_sub;
+}
+
 TEST_F(LifecycleNodeTest, StartupPublishesRecoveredContextFromValidState)
 {
   namespace fs = std::filesystem;

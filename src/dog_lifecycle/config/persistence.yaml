@@ -6,3 +6,5 @@ dog_lifecycle:
       max_write_bytes: 16384
       min_write_interval_ms: 100
       state_version: 1
+    estop_topic: /system/estop
+    system_mode_topic: /lifecycle/system_mode

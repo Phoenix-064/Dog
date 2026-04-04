@@ -32,6 +32,8 @@ public:
   bool IsDegradePending() const;
   int64_t GetLastBreakerToDegradeLatencyMs() const;
   std::string GetLastRecoveryContextForTest() const;
+  bool IsIdleSpinningForTest() const;
+  std::string GetLastSystemModePayloadForTest() const;
 
 private:
   enum class GraspFeedbackType
@@ -59,8 +61,10 @@ private:
 
   void graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void degradeAckCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void estopCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   GraspFeedbackEvent parseGraspFeedback(const std::string & payload, const rclcpp::Time & stamp) const;
   DegradeAckEvent parseDegradeAck(const std::string & payload) const;
+  std::optional<bool> parseEstopActive(const std::string & payload) const;
   void processGraspFeedback(const GraspFeedbackEvent & event);
   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
   void publishDegradeCommand(const std::string & task_id, const char * reason);
@@ -70,6 +74,7 @@ private:
     int64_t map_cost_ms,
     int64_t total_cost_ms);
   void degradeTimeoutCallback(uint64_t request_id);
+  void publishSystemMode(const std::string & mode, const char * reason);
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
   static const char * feedbackTypeToString(GraspFeedbackType type);
   static std::string normalizeToken(const std::string & value);
@@ -86,6 +91,8 @@ private:
   std::string degrade_command_topic_;
   std::string degrade_ack_topic_;
   std::string recovery_context_topic_;
+  std::string estop_topic_;
+  std::string system_mode_topic_;
 
   mutable std::mutex breaker_mutex_;
   size_t consecutive_empty_count_{0U};
@@ -108,11 +115,15 @@ private:
 
   mutable std::mutex recovery_context_mutex_;
   std::string last_recovery_context_payload_;
+  bool idle_spinning_active_{false};
+  std::string last_system_mode_payload_;
 
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr grasp_feedback_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr degrade_ack_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr estop_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr system_mode_pub_;
   rclcpp::TimerBase::SharedPtr degrade_timeout_timer_;
 };
 

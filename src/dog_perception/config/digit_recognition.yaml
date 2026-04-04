@@ -11,3 +11,9 @@ dog_perception:
     digit_glare_ratio_threshold: 0.35
     digit_temporal_window: 5
     digit_temporal_confirm_count: 2
+    lifecycle_mode_topic: "/lifecycle/system_mode"
+    single_side_dropout_timeout_ms: 150
+    extrapolation_watchdog_ms: 20
+    extrapolation_max_window_ms: 300
+    extrapolation_min_interval_ms: 40
+    idle_spinning_publish_ms: 200

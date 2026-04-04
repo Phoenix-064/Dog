@@ -8,6 +8,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 
 #include "dog_perception/target_3d_solver.hpp"
@@ -32,7 +33,11 @@ public:
   size_t getSolveFailureCount() const;
   size_t getLatencySampleCount() const;
   size_t getDigitLatencySampleCount() const;
+  size_t getExtrapolationTriggerCount() const;
+  size_t getExtrapolationRecoveryCount() const;
+  size_t getIdleSpinningTriggerCount() const;
   bool isQosCompatible() const;
+  bool isIdleSpinningMode() const;
   double getLatencyP95Ms() const;
   double getEndToEndLatencyP95Ms() const;
   double getDigitLatencyP95Ms() const;
@@ -62,6 +67,13 @@ private:
   void synchronizedCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
+  void imageStampCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
+  void pointcloudStampCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
+  void lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg);
+  void watchdogCallback();
+  bool shouldTriggerExtrapolation(const rclcpp::Time & current_time, std::string & reason) const;
+  bool publishExtrapolatedTarget(const rclcpp::Time & current_time, const std::string & reason);
+  void publishIdleSpinningPose(const rclcpp::Time & current_time);
   void processDigitRecognition(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
   bool evaluateRuntimeQosCompatibility();
   bool shouldDropAsStale(
@@ -75,6 +87,12 @@ private:
     bool published;
   };
 
+  struct PoseState
+  {
+    rclcpp::Time stamp;
+    dog_interfaces::msg::Target3D target;
+  };
+
   std::string image_topic_;
   std::string pointcloud_topic_;
   std::string target3d_topic_;
@@ -84,9 +102,15 @@ private:
   int stale_frame_timeout_ms_;
   int max_future_skew_ms_;
   int frame_cache_size_;
+  int single_side_dropout_timeout_ms_;
+  int extrapolation_watchdog_ms_;
+  int extrapolation_max_window_ms_;
+  int extrapolation_min_interval_ms_;
+  int idle_spinning_publish_ms_;
   std::string qos_reliability_;
   std::string solver_type_;
   std::string digit_recognizer_type_;
+  std::string lifecycle_mode_topic_;
   std::string extrinsics_yaml_path_;
   int digit_roi_x_;
   int digit_roi_y_;
@@ -99,11 +123,30 @@ private:
   int digit_temporal_confirm_count_;
   CameraExtrinsics camera_extrinsics_;
   bool qos_compatible_;
+  bool idle_spinning_mode_;
+  bool extrapolation_active_;
+  bool has_last_image_stamp_;
+  bool has_last_pointcloud_stamp_;
+  bool has_last_extrapolation_pub_time_;
+  bool has_last_idle_publish_time_;
+  bool has_mode_enter_time_;
   size_t dropped_frame_count_;
   size_t solved_frame_count_;
   size_t solve_failure_count_;
+  size_t extrapolation_trigger_count_;
+  size_t extrapolation_recovery_count_;
+  size_t idle_spinning_trigger_count_;
+
+  rclcpp::Time last_image_stamp_;
+  rclcpp::Time last_pointcloud_stamp_;
+  rclcpp::Time last_image_receive_time_;
+  rclcpp::Time last_pointcloud_receive_time_;
+  rclcpp::Time last_extrapolation_pub_time_;
+  rclcpp::Time last_idle_publish_time_;
+  rclcpp::Time mode_enter_time_;
 
   boost::circular_buffer<FrameState> frame_history_;
+  boost::circular_buffer<PoseState> pose_history_;
   boost::circular_buffer<double> latency_samples_ms_;
   boost::circular_buffer<double> end_to_end_latency_samples_ms_;
   boost::circular_buffer<int> digit_label_history_;
@@ -116,6 +159,10 @@ private:
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> image_subscriber_;
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> pointcloud_subscriber_;
   std::unique_ptr<message_filters::Synchronizer<SyncPolicy>> synchronizer_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_stamp_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_stamp_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_mode_sub_;
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
   rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr target3d_pub_;
   rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr digit_result_pub_;

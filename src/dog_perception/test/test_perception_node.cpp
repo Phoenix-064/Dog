@@ -3,6 +3,7 @@
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
 #include <chrono>
@@ -102,6 +103,8 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   int frame_cache_size = 8,
   const std::string & qos_reliability = "best_effort",
   int stale_timeout_ms = 50,
+  int dropout_timeout_ms = 150,
+  const std::string & lifecycle_mode_topic = "/test/lifecycle/system_mode/default",
   int digit_temporal_confirm_count = 2,
   const std::string & digit_recognizer_type = "heuristic")
 {
@@ -115,6 +118,10 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("sync_slop_ms", 30);
   options.append_parameter_override("frame_cache_size", frame_cache_size);
   options.append_parameter_override("stale_frame_timeout_ms", stale_timeout_ms);
+  options.append_parameter_override("single_side_dropout_timeout_ms", dropout_timeout_ms);
+  options.append_parameter_override("extrapolation_watchdog_ms", 20);
+  options.append_parameter_override("extrapolation_min_interval_ms", 30);
+  options.append_parameter_override("lifecycle_mode_topic", lifecycle_mode_topic);
   options.append_parameter_override("digit_temporal_window", 5);
   options.append_parameter_override("digit_temporal_confirm_count", digit_temporal_confirm_count);
   options.append_parameter_override("digit_roi_width", 64);
@@ -137,6 +144,22 @@ void spinFor(
     executor.spin_some();
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
+}
+
+bool waitUntil(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::chrono::milliseconds timeout,
+  const std::function<bool()> & condition)
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    if (condition()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return condition();
 }
 
 }  // namespace
@@ -275,6 +298,89 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
   EXPECT_GE(perception_node->getLatencySampleCount(), 1U);
   EXPECT_LT(perception_node->getLatencyP95Ms(), 50.0);
   EXPECT_LT(perception_node->getEndToEndLatencyP95Ms(), 50.0);
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)target_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, SingleSideDropoutTriggersExtrapolationAndThenRecovers)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/dropout_extrapolation";
+  const std::string cloud_topic = "/test/cloud/dropout_extrapolation";
+  const std::string target_topic = "/test/target/dropout_extrapolation";
+  const std::string mode_topic = "/test/lifecycle/system_mode/dropout_extrapolation";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    "/test/digit/dropout_extrapolation",
+    8,
+    "best_effort",
+    50,
+    80,
+    mode_topic,
+    2,
+    "heuristic");
+  auto io_node = std::make_shared<rclcpp::Node>("io_dropout_extrapolation");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub = io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+  auto mode_pub = io_node->create_publisher<std_msgs::msg::String>(
+    mode_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  size_t extrapolated_count = 0U;
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+    target_topic,
+    rclcpp::SensorDataQoS(),
+    [&extrapolated_count](const dog_interfaces::msg::Target3D::ConstSharedPtr msg) {
+      if (msg->target_id == "extrapolated_target") {
+        ++extrapolated_count;
+      }
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(120));
+
+  std_msgs::msg::String normal_mode;
+  normal_mode.data = "mode=normal;reason=test_setup";
+  mode_pub->publish(normal_mode);
+
+  const auto stamp1 = io_node->now();
+  image_pub->publish(makeImage(stamp1));
+  cloud_pub->publish(makePointCloud(stamp1));
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp2 = io_node->now();
+  image_pub->publish(makeImage(stamp2));
+  cloud_pub->publish(makePointCloud(stamp2));
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto dropout_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+  while (std::chrono::steady_clock::now() < dropout_deadline) {
+    image_pub->publish(makeImage(io_node->now()));
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+
+  EXPECT_GE(extrapolated_count, 1U);
+  EXPECT_GE(perception_node->getExtrapolationTriggerCount(), 1U);
+
+  const auto recover_stamp = io_node->now();
+  image_pub->publish(makeImage(recover_stamp));
+  cloud_pub->publish(makePointCloud(recover_stamp));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(700), [&]() {
+    return perception_node->getExtrapolationRecoveryCount() >= 1U;
+  }));
 
   executor.remove_node(io_node);
   executor.remove_node(perception_node);
