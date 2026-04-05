@@ -9,6 +9,7 @@ dog_perception:
     digit_min_confidence: 0.30
     digit_glare_brightness_threshold: 245.0
     digit_glare_ratio_threshold: 0.35
+    digit_yolo_model_path: "yolo11n.pt"
     digit_temporal_window: 5
     digit_temporal_confirm_count: 2
     lifecycle_mode_topic: "/lifecycle/system_mode"

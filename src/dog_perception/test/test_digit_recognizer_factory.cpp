@@ -30,7 +30,8 @@ dog_perception::DigitRecognizerParams defaultParams()
     32,
     0.10,
     245.0,
-    0.40};
+    0.40,
+    "yolo11n.pt"};
 }
 
 }  // namespace
@@ -114,4 +115,20 @@ TEST(DigitRecognizerFactoryTest, NullCreatorResultThrows)
         rclcpp::get_logger("digit_factory_test"));
     },
     std::runtime_error);
+}
+
+TEST(DigitRecognizerFactoryTest, KnownTypeOpencvDnnYoloCanBeCreated)
+{
+  auto params = defaultParams();
+  params.yolo_model_path = "/tmp/not_found_yolo_model.onnx";
+
+  auto recognizer = dog_perception::DigitRecognizerFactory::create(
+    "opencv_dnn_yolo",
+    params,
+    rclcpp::get_logger("digit_factory_test"));
+
+  ASSERT_NE(recognizer, nullptr);
+  const auto result = recognizer->infer(dog_perception::ImageView{makeImage(180U)});
+  EXPECT_FALSE(result.has_feature);
+  EXPECT_EQ(result.reason, "model_unavailable");
 }

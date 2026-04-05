@@ -35,11 +35,15 @@ void ensureBuiltinDigitRecognizers(const rclcpp::Logger & logger)
   std::call_once(register_once, [&logger]() {
     const bool heuristic_registered = registerHeuristicDigitRecognizer();
     const bool mean_intensity_registered = registerMeanIntensityDigitRecognizer();
+    const bool yolo_registered = registerOpencvDnnYoloDigitRecognizer();
     if (!heuristic_registered) {
       RCLCPP_ERROR(logger, "Failed to register builtin recognizer: heuristic");
     }
     if (!mean_intensity_registered) {
       RCLCPP_ERROR(logger, "Failed to register builtin recognizer: mean_intensity");
+    }
+    if (!yolo_registered) {
+      RCLCPP_ERROR(logger, "Failed to register builtin recognizer: opencv_dnn_yolo");
     }
   });
 }

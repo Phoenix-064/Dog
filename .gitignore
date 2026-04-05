@@ -67,3 +67,6 @@ frames_*.pdf
 *.log
 !_bmad-output/implementation-artifacts/1-3-memory-soak-30m.log
 !_bmad-output/implementation-artifacts/1-3-perception-runtime-30m.log
+
+# YOLO models
+*.pt

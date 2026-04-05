@@ -197,6 +197,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , digit_min_confidence_(0.30)
 , digit_glare_brightness_threshold_(245.0)
 , digit_glare_ratio_threshold_(0.35)
+, digit_yolo_model_path_("yolo11n.pt")
 , digit_temporal_window_(5)
 , digit_temporal_confirm_count_(2)
 , qos_compatible_(true)
@@ -252,6 +253,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   digit_glare_brightness_threshold_ =
     declare_parameter<double>("digit_glare_brightness_threshold", 245.0);
   digit_glare_ratio_threshold_ = declare_parameter<double>("digit_glare_ratio_threshold", 0.35);
+  digit_yolo_model_path_ = declare_parameter<std::string>("digit_yolo_model_path", "yolo11n.pt");
   digit_temporal_window_ = declare_parameter<int>("digit_temporal_window", 5);
   digit_temporal_confirm_count_ = declare_parameter<int>("digit_temporal_confirm_count", 2);
 
@@ -293,7 +295,8 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
     digit_roi_height_,
     digit_min_confidence_,
     digit_glare_brightness_threshold_,
-    digit_glare_ratio_threshold_};
+    digit_glare_ratio_threshold_,
+    digit_yolo_model_path_};
   digit_recognizer_ = DigitRecognizerFactory::create(
     digit_recognizer_type_,
     recognizer_params,

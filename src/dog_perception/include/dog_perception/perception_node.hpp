@@ -184,6 +184,7 @@ private:
   double digit_min_confidence_;
   double digit_glare_brightness_threshold_;
   double digit_glare_ratio_threshold_;
+  std::string digit_yolo_model_path_;
   int digit_temporal_window_;
   int digit_temporal_confirm_count_;
   CameraExtrinsics camera_extrinsics_;

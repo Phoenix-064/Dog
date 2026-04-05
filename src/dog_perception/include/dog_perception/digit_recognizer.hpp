@@ -25,6 +25,7 @@ struct DigitRecognizerParams
   double min_confidence;
   double glare_brightness_threshold;
   double glare_ratio_threshold;
+  std::string yolo_model_path;
 };
 
 struct DigitRecognitionResult
@@ -64,6 +65,9 @@ bool registerHeuristicDigitRecognizer();
 /// @brief 注册内置均值强度数字识别器实现。
 /// @return 注册成功时返回 true。
 bool registerMeanIntensityDigitRecognizer();
+/// @brief 注册内置 OpenCV DNN YOLO 数字识别器实现。
+/// @return 注册成功时返回 true。
+bool registerOpencvDnnYoloDigitRecognizer();
 
 class DigitRecognizerFactory
 {
