@@ -14,6 +14,8 @@
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>dog_interfaces</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 
