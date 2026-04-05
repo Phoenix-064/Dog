@@ -21,65 +21,65 @@ namespace dog_lifecycle
 class LifecycleNode : public rclcpp::Node
 {
 public:
-  /// @brief Construct lifecycle node with default node options.
+  /// @brief 使用默认节点选项构造生命周期节点。
   LifecycleNode();
-  /// @brief Construct lifecycle node with explicit ROS node options.
-  /// @param options ROS node options.
+  /// @brief 使用显式 ROS 节点选项构造生命周期节点。
+  /// @param options ROS 节点选项。
   explicit LifecycleNode(const rclcpp::NodeOptions & options);
-  /// @brief Shutdown hook that clears persistent recovery state.
+  /// @brief 关闭钩子，用于清理持久化恢复状态。
   ~LifecycleNode() override;
 
-  /// @brief Persist a lifecycle transition for recovery on next startup.
-  /// @param task_phase Transition task phase.
-  /// @param target_state Transition target state.
-  /// @return True when the state is persisted successfully.
+  /// @brief 持久化生命周期迁移信息，供下次启动恢复。
+  /// @param task_phase 迁移任务阶段。
+  /// @param target_state 迁移目标状态。
+  /// @return 状态持久化成功时返回 true。
   bool PersistTransition(const std::string & task_phase, const std::string & target_state);
-  /// @brief Remove persisted lifecycle state files.
-  /// @return True when persistent state is cleared or absent.
+  /// @brief 删除已持久化的生命周期状态文件。
+  /// @return 持久化状态已清理或本就不存在时返回 true。
   bool ClearPersistentState();
 
-  /// @brief Inject raw grasp feedback for deterministic unit tests.
-  /// @param raw_feedback Simulated feedback payload.
+  /// @brief 为确定性单元测试注入原始抓取反馈。
+  /// @param raw_feedback 模拟反馈负载。
   void InjectGraspFeedbackForTest(const std::string & raw_feedback);
-  /// @brief Test helper for breaker-open status.
-  /// @return True if breaker is currently open.
+  /// @brief 用于测试的熔断器开启状态查询。
+  /// @return 熔断器当前开启时返回 true。
   bool IsBreakerOpen() const;
-  /// @brief Test helper for blocked task status.
-  /// @param task_id Task identifier.
-  /// @return True when the task is blocked by breaker state.
+  /// @brief 用于测试的任务阻塞状态查询。
+  /// @param task_id 任务标识。
+  /// @return 当任务被熔断器状态阻塞时返回 true。
   bool IsTaskBlocked(const std::string & task_id) const;
-  /// @brief Test helper for consecutive empty-grasp counter.
-  /// @return Current consecutive empty-grasp count.
+  /// @brief 用于测试的连续空抓取计数查询。
+  /// @return 当前连续空抓取计数。
   size_t GetConsecutiveEmptyCount() const;
-  /// @brief Test helper for degrade pending state.
-  /// @return True when waiting for degrade acknowledgement.
+  /// @brief 用于测试的降级待确认状态查询。
+  /// @return 正在等待降级确认时返回 true。
   bool IsDegradePending() const;
-  /// @brief Test helper for breaker-to-degrade latency metric.
-  /// @return Last measured latency in milliseconds, or -1 when unavailable.
+  /// @brief 用于测试的熔断到降级时延指标查询。
+  /// @return 最近一次测得时延（毫秒），不可用时为 -1。
   int64_t GetLastBreakerToDegradeLatencyMs() const;
-  /// @brief Test helper exposing last published recovery context payload.
-  /// @return Recovery context payload string.
+  /// @brief 用于测试，暴露最近发布的恢复上下文负载。
+  /// @return 恢复上下文负载字符串。
   std::string GetLastRecoveryContextForTest() const;
-  /// @brief Test helper for idle-spinning state.
-  /// @return True when idle-spinning mode is active.
+  /// @brief 用于测试的空转状态查询。
+  /// @return 空转模式激活时返回 true。
   bool IsIdleSpinningForTest() const;
-  /// @brief Test helper exposing last system-mode payload.
-  /// @return Last published system-mode payload.
+  /// @brief 用于测试，暴露最近系统模式负载。
+  /// @return 最近发布的系统模式负载。
   std::string GetLastSystemModePayloadForTest() const;
-  /// @brief Test helper for reconnect pending state.
-  /// @return True when reconnect sequence is in progress.
+  /// @brief 用于测试的重连待完成状态查询。
+  /// @return 重连流程进行中时返回 true。
   bool IsReconnectPendingForTest() const;
-  /// @brief Test helper for reconnect transition completion state.
-  /// @return True when both reconnect transition phases are confirmed.
+  /// @brief 用于测试的重连迁移完成状态查询。
+  /// @return 当重连迁移两个阶段均确认时返回 true。
   bool IsReconnectTransitionCompletedForTest() const;
-  /// @brief Test helper for controlled degrade mode state.
-  /// @return True when node entered controlled degrade mode.
+  /// @brief 用于测试的受控降级模式状态查询。
+  /// @return 节点进入受控降级模式时返回 true。
   bool IsControlledDegradeModeForTest() const;
-  /// @brief Test helper for reconnect recovery latency metric.
-  /// @return Last reconnect recovery latency in milliseconds.
+  /// @brief 用于测试的重连恢复时延指标查询。
+  /// @return 最近一次重连恢复时延（毫秒）。
   int64_t GetLastReconnectRecoveryLatencyMsForTest() const;
-  /// @brief Test helper for restart attempts currently tracked in window.
-  /// @return Number of restart attempts in sliding restart window.
+  /// @brief 用于测试的窗口内重启尝试次数查询。
+  /// @return 滑动重启窗口中的重试次数。
   size_t GetRestartAttemptsInWindowForTest() const;
 
 private:
@@ -106,98 +106,98 @@ private:
     bool has_request_id{false};
   };
 
-  /// @brief Consume grasp feedback stream and drive breaker/degrade logic.
-  /// @param msg Grasp feedback payload message.
+  /// @brief 消费抓取反馈流并驱动熔断/降级逻辑。
+  /// @param msg 抓取反馈负载消息。
   void graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Consume degrade acknowledgement messages.
-  /// @param msg Degrade acknowledgement payload.
+  /// @brief 消费降级确认消息。
+  /// @param msg 降级确认负载。
   void degradeAckCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Consume e-stop mode updates.
-  /// @param msg E-stop payload.
+  /// @brief 消费急停模式更新。
+  /// @param msg 急停负载。
   void estopCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Track valid perception frames for heartbeat recovery gating.
-  /// @param msg Perception target frame.
+  /// @brief 跟踪有效感知帧，用于心跳恢复判定。
+  /// @param msg 感知目标帧。
   void validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg);
-  /// @brief Consume transition status acknowledgements for reconnect flow.
-  /// @param msg Transition status payload.
+  /// @brief 消费重连流程中的迁移状态确认。
+  /// @param msg 迁移状态负载。
   void lifecycleTransitionStatusCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Validate whether an incoming target frame qualifies as healthy data.
-  /// @param msg Target frame message.
-  /// @return True when frame content is valid.
+  /// @brief 校验输入目标帧是否满足健康数据条件。
+  /// @param msg 目标帧消息。
+  /// @return 帧内容有效时返回 true。
   bool isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const;
-  /// @brief Parse raw grasp feedback payload into structured event.
-  /// @param payload Raw feedback payload.
-  /// @param stamp Reception timestamp.
-  /// @return Parsed grasp feedback event.
+  /// @brief 将原始抓取反馈负载解析为结构化事件。
+  /// @param payload 原始反馈负载。
+  /// @param stamp 接收时间戳。
+  /// @return 解析后的抓取反馈事件。
   GraspFeedbackEvent parseGraspFeedback(const std::string & payload, const rclcpp::Time & stamp) const;
-  /// @brief Parse degrade acknowledgement payload.
-  /// @param payload Raw ack payload.
-  /// @return Parsed degrade acknowledgement event.
+  /// @brief 解析降级确认负载。
+  /// @param payload 原始确认负载。
+  /// @return 解析后的降级确认事件。
   DegradeAckEvent parseDegradeAck(const std::string & payload) const;
-  /// @brief Parse e-stop payload into boolean active state.
-  /// @param payload Raw e-stop payload.
-  /// @return Parsed active flag, or nullopt when ambiguous.
+  /// @brief 将急停负载解析为布尔激活状态。
+  /// @param payload 原始急停负载。
+  /// @return 解析后的激活标记，歧义时返回 nullopt。
   std::optional<bool> parseEstopActive(const std::string & payload) const;
-  /// @brief Apply parsed grasp feedback to breaker/degrade state machine.
-  /// @param event Parsed grasp feedback event.
+  /// @brief 将已解析抓取反馈应用到熔断/降级状态机。
+  /// @param event 解析后的抓取反馈事件。
   void processGraspFeedback(const GraspFeedbackEvent & event);
-  /// @brief Periodic heartbeat guard callback.
+  /// @brief 周期性心跳守护回调。
   void heartbeatTimerCallback();
-  /// @brief Reset breaker counters if no recent empty-grasp events are observed.
-  /// @param now Current node time.
+  /// @brief 当近期无空抓取事件时重置熔断器计数。
+  /// @param now 当前节点时间。
   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
-  /// @brief Publish degrade command message and arm degrade timeout tracking.
-  /// @param task_id Blocked task identifier.
-  /// @param reason Degrade trigger reason.
+  /// @brief 发布降级命令并启动降级超时跟踪。
+  /// @param task_id 被阻塞的任务标识。
+  /// @param reason 触发降级的原因。
   void publishDegradeCommand(const std::string & task_id, const char * reason);
-  /// @brief Publish lifecycle transition command payload.
-  /// @param from_state Transition source state.
-  /// @param to_state Transition destination state.
-  /// @param reason Transition reason.
-  /// @param attempt Reconnect attempt index.
+  /// @brief 发布生命周期迁移命令负载。
+  /// @param from_state 迁移源状态。
+  /// @param to_state 迁移目标状态。
+  /// @param reason 迁移原因。
+  /// @param attempt 重连尝试序号。
   void publishLifecycleTransition(
     const char * from_state,
     const char * to_state,
     const char * reason,
     uint32_t attempt);
-  /// @brief Publish heartbeat-related health alarm payload.
-  /// @param reason Alarm reason.
-  /// @param attempts Restart attempt count.
-  /// @param since_last_valid_frame_ms Elapsed ms since last valid frame.
+  /// @brief 发布与心跳相关的健康告警负载。
+  /// @param reason 告警原因。
+  /// @param attempts 重启尝试次数。
+  /// @param since_last_valid_frame_ms 距上次有效帧的毫秒数。
   void publishHealthAlarm(const char * reason, uint32_t attempts, int64_t since_last_valid_frame_ms);
-  /// @brief Publish startup recovery context after loading persisted state.
-  /// @param load_result Persisted state load result.
-  /// @param load_cost_ms Load stage latency in milliseconds.
-  /// @param map_cost_ms Mapping stage latency in milliseconds.
-  /// @param total_cost_ms Total recovery publish latency in milliseconds.
+  /// @brief 加载持久化状态后发布启动恢复上下文。
+  /// @param load_result 持久化状态加载结果。
+  /// @param load_cost_ms 加载阶段时延（毫秒）。
+  /// @param map_cost_ms 映射阶段时延（毫秒）。
+  /// @param total_cost_ms 恢复发布总时延（毫秒）。
   void publishRecoveryContext(
     const StateStoreLoadResult & load_result,
     int64_t load_cost_ms,
     int64_t map_cost_ms,
     int64_t total_cost_ms);
-  /// @brief Handle degrade timeout expiry for request tracking.
-  /// @param request_id Request id associated with timeout timer.
+  /// @brief 处理用于请求跟踪的降级超时到期。
+  /// @param request_id 与超时定时器关联的请求 id。
   void degradeTimeoutCallback(uint64_t request_id);
-  /// @brief Publish lifecycle system mode payload.
-  /// @param mode Target mode token.
-  /// @param reason Mode transition reason.
+  /// @brief 发布生命周期系统模式负载。
+  /// @param mode 目标模式标记。
+  /// @param reason 模式切换原因。
   void publishSystemMode(const std::string & mode, const char * reason);
-  /// @brief Extract value for key from semicolon-separated key-value payload.
-  /// @param payload Input payload.
-  /// @param key Key name to query.
-  /// @return Normalized value or empty string.
+  /// @brief 从分号分隔的键值对负载中提取指定键值。
+  /// @param payload 输入负载。
+  /// @param key 要查询的键名。
+  /// @return 规范化后的值，或空字符串。
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
-  /// @brief Convert feedback type enum to stable lowercase text.
-  /// @param type Feedback enum value.
-  /// @return Feedback type string.
+  /// @brief 将反馈类型枚举转换为稳定的小写文本。
+  /// @param type 反馈枚举值。
+  /// @return 反馈类型字符串。
   static const char * feedbackTypeToString(GraspFeedbackType type);
-  /// @brief Normalize tokens by removing spaces and lowercasing.
-  /// @param value Raw token.
-  /// @return Normalized token.
+  /// @brief 通过去空白并转小写规范化标记。
+  /// @param value 原始标记。
+  /// @return 规范化后的标记。
   static std::string normalizeToken(const std::string & value);
-  /// @brief Check whether a task is currently blocked while lock is held.
-  /// @param task_id Task identifier.
-  /// @return True when blocked by breaker logic.
+  /// @brief 在持锁状态下检查任务当前是否被阻塞。
+  /// @param task_id 任务标识。
+  /// @return 被熔断逻辑阻塞时返回 true。
   bool isTaskBlockedLocked(const std::string & task_id) const;
 
   std::unique_ptr<IStateStore> state_store_;

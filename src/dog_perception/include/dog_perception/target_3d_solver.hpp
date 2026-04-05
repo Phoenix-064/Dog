@@ -21,23 +21,23 @@ struct SyncedSensorFrame
 class ITarget3DSolver
 {
 public:
-  /// @brief Virtual destructor for polymorphic target solvers.
+  /// @brief 多态目标求解器的虚析构函数。
   virtual ~ITarget3DSolver() = default;
 
-  /// @brief Solve synchronized sensor frame into Target3D output.
-  /// @param frame Synchronized image-pointcloud frame.
-  /// @param output Target3D output message to populate.
-  /// @return True when solve succeeds.
+  /// @brief 将同步传感器帧求解为 Target3D 输出。
+  /// @param frame 同步图像-点云帧。
+  /// @param output 待填充的 Target3D 输出消息。
+  /// @return 求解成功时返回 true。
   virtual bool solve(const SyncedSensorFrame & frame, dog_interfaces::msg::Target3D & output) = 0;
 };
 
 class Target3DSolverFactory
 {
 public:
-  /// @brief Create target solver by configured type.
-  /// @param solver_type Solver type key.
-  /// @param logger Logger for diagnostics.
-  /// @return Target solver instance.
+  /// @brief 按配置类型创建目标求解器。
+  /// @param solver_type 求解器类型键。
+  /// @param logger 诊断日志器。
+  /// @return 目标求解器实例。
   static std::unique_ptr<ITarget3DSolver> create(
     const std::string & solver_type,
     const rclcpp::Logger & logger);

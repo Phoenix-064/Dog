@@ -25,51 +25,51 @@ namespace dog_perception
 class PerceptionNode : public rclcpp::Node
 {
 public:
-  /// @brief Construct perception node and initialize synchronized perception pipeline.
-  /// @param options ROS node options.
+  /// @brief 构造感知节点并初始化同步感知流水线。
+  /// @param options ROS 节点选项。
   explicit PerceptionNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
-  /// @brief Get current cached frame-history size.
-  /// @return Number of cached frame records.
+  /// @brief 获取当前缓存的帧历史大小。
+  /// @return 缓存帧记录数量。
   size_t getFrameCacheSize() const;
-  /// @brief Get number of dropped synchronized frames.
-  /// @return Dropped frame count.
+  /// @brief 获取被丢弃的同步帧数量。
+  /// @return 丢帧计数。
   size_t getDroppedFrameCount() const;
-  /// @brief Get number of successfully solved target frames.
-  /// @return Solved frame count.
+  /// @brief 获取成功求解目标帧数量。
+  /// @return 成功求解帧计数。
   size_t getSolvedFrameCount() const;
-  /// @brief Get number of solver failures.
-  /// @return Solve failure count.
+  /// @brief 获取求解器失败次数。
+  /// @return 求解失败计数。
   size_t getSolveFailureCount() const;
-  /// @brief Get number of synchronized-latency samples.
-  /// @return Latency sample count.
+  /// @brief 获取同步链路时延采样数量。
+  /// @return 时延样本计数。
   size_t getLatencySampleCount() const;
-  /// @brief Get number of digit-recognition latency samples.
-  /// @return Digit latency sample count.
+  /// @brief 获取数字识别时延采样数量。
+  /// @return 数字时延样本计数。
   size_t getDigitLatencySampleCount() const;
-  /// @brief Get number of extrapolation trigger events.
-  /// @return Extrapolation trigger count.
+  /// @brief 获取外推触发事件数量。
+  /// @return 外推触发计数。
   size_t getExtrapolationTriggerCount() const;
-  /// @brief Get number of recoveries from extrapolation to synchronized solving.
-  /// @return Extrapolation recovery count.
+  /// @brief 获取从外推恢复到同步求解的次数。
+  /// @return 外推恢复计数。
   size_t getExtrapolationRecoveryCount() const;
-  /// @brief Get number of idle-spinning mode enter events.
-  /// @return Idle-spinning trigger count.
+  /// @brief 获取进入空转模式的事件数量。
+  /// @return 空转触发计数。
   size_t getIdleSpinningTriggerCount() const;
-  /// @brief Report runtime QoS compatibility state.
-  /// @return True when runtime publishers match configured QoS reliability.
+  /// @brief 报告运行时 QoS 兼容状态。
+  /// @return 当运行时发布端匹配配置的 QoS 可靠性时返回 true。
   bool isQosCompatible() const;
-  /// @brief Report whether lifecycle mode is idle-spinning/degraded.
-  /// @return True when node is in idle-spinning mode.
+  /// @brief 报告生命周期模式是否为空转/降级。
+  /// @return 节点处于空转模式时返回 true。
   bool isIdleSpinningMode() const;
-  /// @brief Compute p95 solver execution latency in milliseconds.
-  /// @return P95 latency.
+  /// @brief 计算求解执行时延的 p95（毫秒）。
+  /// @return P95 时延。
   double getLatencyP95Ms() const;
-  /// @brief Compute p95 end-to-end latency from source timestamp to publish time.
-  /// @return P95 end-to-end latency.
+  /// @brief 计算从源时间戳到发布时间的端到端 p95 时延。
+  /// @return 端到端 P95 时延。
   double getEndToEndLatencyP95Ms() const;
-  /// @brief Compute p95 digit-recognition latency in milliseconds.
-  /// @return P95 digit latency.
+  /// @brief 计算数字识别时延的 p95（毫秒）。
+  /// @return 数字识别 P95 时延。
   double getDigitLatencyP95Ms() const;
 
 private:
@@ -90,57 +90,57 @@ private:
     double qw;
   };
 
-  /// @brief Resolve default extrinsics YAML path from package share directory.
-  /// @return Default extrinsics YAML absolute path.
+  /// @brief 从包共享目录解析默认外参 YAML 路径。
+  /// @return 默认外参 YAML 绝对路径。
   static std::string getDefaultExtrinsicsYamlPath();
-  /// @brief Load and validate camera extrinsics from YAML.
-  /// @param yaml_path Path to extrinsics YAML file.
-  /// @return Parsed camera extrinsics.
+  /// @brief 从 YAML 加载并校验相机外参。
+  /// @param yaml_path 外参 YAML 文件路径。
+  /// @return 解析后的相机外参。
   CameraExtrinsics loadExtrinsicsFromYaml(const std::string & yaml_path) const;
-  /// @brief Publish static camera transform after extrinsics are loaded.
+  /// @brief 外参加载后发布静态相机变换。
   void initializeStaticTransform();
-  /// @brief Configure synchronized image-pointcloud processing pipeline.
+  /// @brief 配置图像-点云同步处理流水线。
   void setupSynchronizedPipeline();
-  /// @brief Process synchronized image-pointcloud pair.
-  /// @param image_msg Synchronized image message.
-  /// @param pointcloud_msg Synchronized pointcloud message.
+  /// @brief 处理同步后的图像与点云对。
+  /// @param image_msg 同步图像消息。
+  /// @param pointcloud_msg 同步点云消息。
   void synchronizedCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
-  /// @brief Track latest image timestamp and receive time.
-  /// @param image_msg Incoming image message.
+  /// @brief 跟踪最新图像时间戳与接收时间。
+  /// @param image_msg 输入图像消息。
   void imageStampCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
-  /// @brief Track latest pointcloud timestamp and receive time.
-  /// @param pointcloud_msg Incoming pointcloud message.
+  /// @brief 跟踪最新点云时间戳与接收时间。
+  /// @param pointcloud_msg 输入点云消息。
   void pointcloudStampCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
-  /// @brief Handle lifecycle mode changes from lifecycle node.
-  /// @param msg Lifecycle mode payload.
+  /// @brief 处理来自生命周期节点的模式变化。
+  /// @param msg 生命周期模式负载。
   void lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg);
-  /// @brief Periodic watchdog for dropout extrapolation and idle-spinning publish.
+  /// @brief 用于掉流外推和空转发布的周期性看门狗。
   void watchdogCallback();
-  /// @brief Determine whether extrapolation should trigger for current stream state.
-  /// @param current_time Current node time.
-  /// @param reason Output trigger reason token.
-  /// @return True when extrapolation should be published.
+  /// @brief 判断当前流状态下是否应触发外推。
+  /// @param current_time 当前节点时间。
+  /// @param reason 输出触发原因标记。
+  /// @return 应发布外推结果时返回 true。
   bool shouldTriggerExtrapolation(const rclcpp::Time & current_time, std::string & reason) const;
-  /// @brief Publish extrapolated target from recent pose history.
-  /// @param current_time Publish timestamp.
-  /// @param reason Trigger reason token.
-  /// @return True when extrapolated target is published.
+  /// @brief 基于近期位姿历史发布外推目标。
+  /// @param current_time 发布时间戳。
+  /// @param reason 触发原因标记。
+  /// @return 外推目标发布成功时返回 true。
   bool publishExtrapolatedTarget(const rclcpp::Time & current_time, const std::string & reason);
-  /// @brief Publish placeholder target pose in idle-spinning mode.
-  /// @param current_time Publish timestamp.
+  /// @brief 在空转模式发布占位目标位姿。
+  /// @param current_time 发布时间戳。
   void publishIdleSpinningPose(const rclcpp::Time & current_time);
-  /// @brief Run digit recognizer and publish digit result target.
-  /// @param image_msg Input image message.
+  /// @brief 运行数字识别器并发布数字结果目标。
+  /// @param image_msg 输入图像消息。
   void processDigitRecognition(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
-  /// @brief Validate runtime endpoint QoS reliability compatibility.
-  /// @return True when runtime publishers match expected reliability.
+  /// @brief 校验运行时端点 QoS 可靠性兼容性。
+  /// @return 当运行时发布端匹配期望可靠性时返回 true。
   bool evaluateRuntimeQosCompatibility();
-  /// @brief Check whether synchronized frame is stale or too far in future.
-  /// @param image_msg Synchronized image message.
-  /// @param pointcloud_msg Synchronized pointcloud message.
-  /// @return True when frame should be dropped as stale.
+  /// @brief 检查同步帧是否过旧或未来时间偏差过大。
+  /// @param image_msg 同步图像消息。
+  /// @param pointcloud_msg 同步点云消息。
+  /// @return 应按陈旧帧丢弃时返回 true。
   bool shouldDropAsStale(
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg) const;

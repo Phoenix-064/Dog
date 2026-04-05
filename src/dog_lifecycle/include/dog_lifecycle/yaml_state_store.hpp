@@ -21,40 +21,40 @@ struct StateStoreConfig
 class YamlStateStore : public IStateStore
 {
 public:
-  /// @brief Construct YAML-backed state store with runtime configuration.
-  /// @param config State-store configuration.
+  /// @brief 使用运行时配置构造基于 YAML 的状态存储。
+  /// @param config 状态存储配置。
   explicit YamlStateStore(StateStoreConfig config);
 
-  /// @brief Persist state to primary file and backup atomically.
-  /// @param state Recoverable state payload.
-  /// @return Save operation result.
+  /// @brief 将状态原子化持久化到主文件和备份文件。
+  /// @param state 可恢复状态负载。
+  /// @return 保存操作结果。
   StateStoreResult Save(const RecoverableState & state) override;
-  /// @brief Load state from primary file with backup fallback.
-  /// @return Load result with optional recoverable state.
+  /// @brief 从主文件加载状态，必要时回退到备份文件。
+  /// @return 包含可选可恢复状态的加载结果。
   StateStoreLoadResult Load() override;
-  /// @brief Remove primary and backup state files.
-  /// @return Clear operation result.
+  /// @brief 删除主状态文件和备份状态文件。
+  /// @return 清理操作结果。
   StateStoreResult Clear() override;
 
 private:
-  /// @brief Validate recoverable state fields before persistence.
-  /// @param state Recoverable state payload.
-  /// @return Validation result.
+  /// @brief 在持久化前校验可恢复状态字段。
+  /// @param state 可恢复状态负载。
+  /// @return 校验结果。
   StateStoreResult ValidateState(const RecoverableState & state) const;
-  /// @brief Write serialized state atomically through temp-file rename.
-  /// @param content Serialized YAML content.
-  /// @return Write operation result.
+  /// @brief 通过临时文件重命名原子写入序列化状态。
+  /// @param content 序列化后的 YAML 内容。
+  /// @return 写入操作结果。
   StateStoreResult WriteAtomically(const std::string & content);
-  /// @brief Parse and validate a state file from disk.
-  /// @param file_path State file path.
-  /// @return Parsed load result.
+  /// @brief 从磁盘解析并校验状态文件。
+  /// @param file_path 状态文件路径。
+  /// @return 解析后的加载结果。
   StateStoreLoadResult ParseStateFile(const std::string & file_path) const;
-  /// @brief Serialize recoverable state into YAML text.
-  /// @param state Recoverable state payload.
-  /// @return Serialized YAML string.
+  /// @brief 将可恢复状态序列化为 YAML 文本。
+  /// @param state 可恢复状态负载。
+  /// @return 序列化后的 YAML 字符串。
   std::string Serialize(const RecoverableState & state) const;
-  /// @brief Get current wall-clock time in milliseconds.
-  /// @return Current epoch milliseconds.
+  /// @brief 获取当前墙钟时间（毫秒）。
+  /// @return 当前 epoch 毫秒值。
   static int64_t NowMs();
 
   StateStoreConfig config_;

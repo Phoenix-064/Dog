@@ -1,6 +1,6 @@
 #include "dog_lifecycle/lifecycle_node.hpp"
 
-/// @brief Entry point for the dog_lifecycle ROS 2 node process.
+/// @brief dog_lifecycle ROS 2 节点进程入口。
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);

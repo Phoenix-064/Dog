@@ -17,25 +17,25 @@ namespace dog_behavior
 class BehaviorNode : public rclcpp::Node
 {
 public:
-  /// @brief Construct a behavior node with default options.
+  /// @brief 使用默认选项构造行为节点。
   BehaviorNode();
-  /// @brief Construct a behavior node with explicit ROS node options.
-  /// @param options ROS node options used for node initialization.
+  /// @brief 使用显式 ROS 节点选项构造行为节点。
+  /// @param options 用于节点初始化的 ROS 节点选项。
   explicit BehaviorNode(const rclcpp::NodeOptions & options);
 
-  /// @brief Trigger an ExecuteBehavior action goal using the latest cached pose.
-  /// @param behavior_name Behavior identifier forwarded to the action server.
-  /// @return True when the goal request is accepted for sending.
+  /// @brief 使用最新缓存位姿触发 ExecuteBehavior 动作目标。
+  /// @param behavior_name 转发给动作服务端的行为标识。
+  /// @return 当目标请求被接受并可发送时返回 true。
   bool triggerExecuteBehavior(const std::string & behavior_name);
-  /// @brief Get the current execution state as a string token.
-  /// @return Lowercase execution state text.
+  /// @brief 以字符串标记获取当前执行状态。
+  /// @return 小写的执行状态文本。
   std::string getExecutionState() const;
-  /// @brief Test helper that checks whether a task phase is blocked after recovery.
-  /// @param task_phase Task phase token to query.
-  /// @return True if the recovered completed phase is tracked.
+  /// @brief 测试辅助函数，检查恢复后任务阶段是否被阻塞。
+  /// @param task_phase 需要查询的任务阶段标记。
+  /// @return 若已跟踪恢复完成阶段则返回 true。
   bool IsTaskPhaseRecoveredForTest(const std::string & task_phase) const;
-  /// @brief Test helper that reports whether idle-spinning mode is active.
-  /// @return True when behavior execution is gated by idle-spinning mode.
+  /// @brief 测试辅助函数，报告空转模式是否激活。
+  /// @return 当行为执行受空转模式限制时返回 true。
   bool IsIdleSpinningForTest() const;
 
 private:
@@ -55,61 +55,61 @@ private:
     kTimeout,
   };
 
-  /// @brief Convert odometry updates to global pose publications and cache latest pose.
-  /// @param msg Incoming odometry message.
+  /// @brief 将里程计更新转换为全局位姿发布并缓存最新位姿。
+  /// @param msg 输入的里程计消息。
   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
-  /// @brief Handle behavior trigger messages and forward them to action dispatch.
-  /// @param msg Incoming trigger payload.
+  /// @brief 处理行为触发消息并转发到动作分发流程。
+  /// @param msg 输入的触发负载。
   void executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Update recovery-derived execution filters.
-  /// @param msg Recovery context payload.
+  /// @brief 更新由恢复上下文推导出的执行过滤条件。
+  /// @param msg 恢复上下文负载。
   void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief React to lifecycle system mode transitions.
-  /// @param msg System mode payload.
+  /// @brief 响应生命周期系统模式切换。
+  /// @param msg 系统模式负载。
   void systemModeCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  /// @brief Periodically probe action server readiness.
+  /// @brief 周期性探测动作服务端就绪状态。
   void actionServerWaitTimerCallback();
-  /// @brief Cancel active goals when action feedback is stale beyond timeout.
+  /// @brief 当动作反馈超时失效时取消活动目标。
   void feedbackWatchdogTimerCallback();
-  /// @brief Handle action goal acceptance or rejection responses.
-  /// @param goal_handle Goal handle returned by the action client.
+  /// @brief 处理动作目标的接受或拒绝响应。
+  /// @param goal_handle 动作客户端返回的目标句柄。
   void goalResponseCallback(ExecuteBehaviorGoalHandle::SharedPtr goal_handle);
-  /// @brief Track action feedback to refresh watchdog timestamps.
-  /// @param goal_handle Goal handle associated with feedback.
-  /// @param feedback Action feedback payload.
+  /// @brief 跟踪动作反馈并刷新看门狗时间戳。
+  /// @param goal_handle 与反馈关联的目标句柄。
+  /// @param feedback 动作反馈负载。
   void feedbackCallback(
     ExecuteBehaviorGoalHandle::SharedPtr goal_handle,
     const std::shared_ptr<const ExecuteBehavior::Feedback> feedback);
-  /// @brief Handle terminal action result and update execution state.
-  /// @param result Wrapped action result.
+  /// @brief 处理动作终态结果并更新执行状态。
+  /// @param result 封装后的动作结果。
   void resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result);
-  /// @brief Check whether current internal state allows sending a new goal.
-  /// @return True when action server is ready and no goal is in-flight.
+  /// @brief 检查当前内部状态是否允许发送新目标。
+  /// @return 当动作服务端就绪且无在途目标时返回 true。
   bool canSendGoalLocked() const;
-  /// @brief Convert internal execution state enum to stable text representation.
-  /// @param state Execution state enum value.
-  /// @return Lowercase state token.
+  /// @brief 将内部执行状态枚举转换为稳定的文本表示。
+  /// @param state 执行状态枚举值。
+  /// @return 小写状态标记。
   std::string executionStateToString(ExecutionState state) const;
-  /// @brief Normalize free-form tokens by lowercasing and removing spaces.
-  /// @param value Raw token text.
-  /// @return Normalized token.
+  /// @brief 通过小写化并移除空白规范化自由格式标记。
+  /// @param value 原始标记文本。
+  /// @return 规范化后的标记。
   static std::string normalizeToken(const std::string & value);
-  /// @brief Parse key-value payload text and decode percent-encoded values.
-  /// @param payload Input payload using semicolon-separated key-value pairs.
-  /// @param key Target key to extract.
-  /// @return Decoded value for the key, or empty string when missing.
+  /// @brief 解析键值对负载文本并解码百分号编码值。
+  /// @param payload 使用分号分隔键值对的输入负载。
+  /// @param key 要提取的目标键。
+  /// @return 该键对应的解码值，缺失时返回空字符串。
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
-  /// @brief Determine whether a target state represents completion.
-  /// @param target_state State token.
-  /// @return True for completed terminal states.
+  /// @brief 判断目标状态是否表示已完成。
+  /// @param target_state 状态标记。
+  /// @return 对于完成终态返回 true。
   bool isCompletedState(const std::string & target_state) const;
-  /// @brief Validate that all pose components are finite.
-  /// @param pose Pose to validate.
-  /// @return True when no NaN/Inf values are present.
+  /// @brief 校验位姿各分量均为有限值。
+  /// @param pose 待校验的位姿。
+  /// @return 当不存在 NaN/Inf 时返回 true。
   bool isFinitePose(const geometry_msgs::msg::Pose & pose) const;
-  /// @brief Validate quaternion norm against expected unit norm tolerance.
-  /// @param pose Pose whose orientation quaternion is checked.
-  /// @return True when quaternion norm is within accepted bounds.
+  /// @brief 按单位四元数容差校验四元数模长。
+  /// @param pose 其朝向四元数需要被检查的位姿。
+  /// @return 当四元数模长在允许范围内时返回 true。
   bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
 
   std::string default_frame_id_;
