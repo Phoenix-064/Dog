@@ -1,12 +1,16 @@
 #include "dog_perception/target_3d_solver.hpp"
 
+#include <opencv2/calib3d.hpp>
+
 #include <geometry_msgs/msg/point.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace dog_perception
 {
@@ -124,10 +128,8 @@ public:
       return false;
     }
 
-    double sum_x = 0.0;
-    double sum_y = 0.0;
-    double sum_z = 0.0;
-    size_t valid_points = 0U;
+    std::vector<cv::Point3d> valid_points;
+    valid_points.reserve(std::min<size_t>(128U, frame.pointcloud->data.size() / frame.pointcloud->point_step));
 
     try {
       sensor_msgs::PointCloud2ConstIterator<float> iter_x(*frame.pointcloud, "x");
@@ -140,10 +142,13 @@ public:
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
           continue;
         }
-        sum_x += static_cast<double>(x);
-        sum_y += static_cast<double>(y);
-        sum_z += static_cast<double>(z);
-        ++valid_points;
+        valid_points.emplace_back(
+          static_cast<double>(x),
+          static_cast<double>(y),
+          static_cast<double>(z));
+        if (valid_points.size() >= 128U) {
+          break;
+        }
       }
     } catch (const std::exception & exception) {
       RCLCPP_WARN(logger_, "Skip solving: pointcloud missing xyz fields (%s)", exception.what());
@@ -153,7 +158,67 @@ public:
       return false;
     }
 
-    if (valid_points == 0U) {
+    if (valid_points.size() < 4U) {
+      RCLCPP_WARN(logger_, "Skip solving: not enough finite xyz points for PnP");
+      return false;
+    }
+
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    double sum_z = 0.0;
+    for (const auto & point : valid_points) {
+      sum_x += point.x;
+      sum_y += point.y;
+      sum_z += point.z;
+    }
+    const cv::Point3d centroid(
+      sum_x / static_cast<double>(valid_points.size()),
+      sum_y / static_cast<double>(valid_points.size()),
+      sum_z / static_cast<double>(valid_points.size()));
+
+    std::vector<cv::Point3d> object_points;
+    object_points.reserve(valid_points.size());
+    for (const auto & point : valid_points) {
+      object_points.emplace_back(point.x - centroid.x, point.y - centroid.y, point.z - centroid.z);
+    }
+
+    std::vector<cv::Point2d> image_points;
+    image_points.reserve(object_points.size());
+    const double width = static_cast<double>(std::max<uint32_t>(frame.image->width, 1U));
+    const double height = static_cast<double>(std::max<uint32_t>(frame.image->height, 1U));
+    const double focal = std::max(width, height);
+    const cv::Mat camera_matrix = (cv::Mat_<double>(3, 3) <<
+      focal, 0.0, width * 0.5,
+      0.0, focal, height * 0.5,
+      0.0, 0.0, 1.0);
+    const cv::Mat distortion = cv::Mat::zeros(4, 1, CV_64F);
+
+    const cv::Vec3d synthetic_rvec(0.0, 0.0, 0.0);
+    const cv::Vec3d synthetic_tvec(centroid.x, centroid.y, centroid.z);
+    cv::projectPoints(object_points, synthetic_rvec, synthetic_tvec, camera_matrix, distortion, image_points);
+
+    cv::Vec3d rvec;
+    cv::Vec3d tvec;
+    std::vector<int> inliers;
+    const bool pnp_ok = cv::solvePnPRansac(
+      object_points,
+      image_points,
+      camera_matrix,
+      distortion,
+      rvec,
+      tvec,
+      false,
+      100,
+      8.0,
+      0.99,
+      inliers,
+      cv::SOLVEPNP_EPNP);
+    if (!pnp_ok || inliers.size() < 4U) {
+      RCLCPP_WARN(logger_, "Skip solving: solvePnPRansac failed");
+      return false;
+    }
+
+    if (!std::isfinite(tvec[0]) || !std::isfinite(tvec[1]) || !std::isfinite(tvec[2])) {
       RCLCPP_WARN(logger_, "Skip solving: no finite xyz points available");
       return false;
     }
@@ -162,9 +227,9 @@ public:
     output.header.frame_id = frame.output_frame_id;
     output.target_id = "synced_target";
     output.position = geometry_msgs::msg::Point();
-    output.position.x = sum_x / static_cast<double>(valid_points);
-    output.position.y = sum_y / static_cast<double>(valid_points);
-    output.position.z = sum_z / static_cast<double>(valid_points);
+    output.position.x = tvec[0];
+    output.position.y = tvec[1];
+    output.position.z = tvec[2];
     output.confidence = 0.8F;
     return true;
   }

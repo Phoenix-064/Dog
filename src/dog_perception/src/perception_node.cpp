@@ -1,5 +1,7 @@
 #include "dog_perception/perception_node.hpp"
 
+#include "dog_perception/box_detector.hpp"
+
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rmw/qos_profiles.h>
 #include <std_msgs/msg/string.hpp>
@@ -200,6 +202,11 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , digit_yolo_model_path_("yolo11n.pt")
 , digit_temporal_window_(5)
 , digit_temporal_confirm_count_(2)
+, box_yolo_model_path_("boxes_detector.pt")
+, box_confidence_threshold_(0.35)
+, box_nms_threshold_(0.45)
+, box_max_detections_(16)
+, box_class_names_({"type_0", "type_1", "type_2", "type_3"})
 , qos_compatible_(true)
 , idle_spinning_mode_(false)
 , extrapolation_active_(false)
@@ -256,6 +263,13 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   digit_yolo_model_path_ = declare_parameter<std::string>("digit_yolo_model_path", "yolo11n.pt");
   digit_temporal_window_ = declare_parameter<int>("digit_temporal_window", 5);
   digit_temporal_confirm_count_ = declare_parameter<int>("digit_temporal_confirm_count", 2);
+  box_yolo_model_path_ = declare_parameter<std::string>("box_yolo_model_path", "boxes_detector.pt");
+  box_confidence_threshold_ = declare_parameter<double>("box_confidence_threshold", 0.35);
+  box_nms_threshold_ = declare_parameter<double>("box_nms_threshold", 0.45);
+  box_max_detections_ = declare_parameter<int>("box_max_detections", 16);
+  box_class_names_ = declare_parameter<std::vector<std::string>>(
+    "box_class_names",
+    std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
 
   if (sync_queue_size_ <= 0 || sync_slop_ms_ <= 0 || stale_frame_timeout_ms_ <= 0 ||
     max_future_skew_ms_ < 0 || frame_cache_size_ <= 0 || digit_temporal_window_ <= 0 ||
@@ -279,6 +293,18 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
     throw std::runtime_error(
             "digit_temporal_confirm_count must be <= digit_temporal_window");
   }
+  if (box_confidence_threshold_ <= 0.0 || box_confidence_threshold_ > 1.0) {
+    throw std::runtime_error("box_confidence_threshold must be in (0, 1]");
+  }
+  if (box_nms_threshold_ <= 0.0 || box_nms_threshold_ > 1.0) {
+    throw std::runtime_error("box_nms_threshold must be in (0, 1]");
+  }
+  if (box_max_detections_ <= 0 || box_max_detections_ > 16) {
+    throw std::runtime_error("box_max_detections must be in [1, 16]");
+  }
+  if (box_class_names_.size() != 4U) {
+    throw std::runtime_error("box_class_names must provide exactly 4 class labels");
+  }
 
   frame_history_.set_capacity(static_cast<size_t>(frame_cache_size_));
   pose_history_.set_capacity(static_cast<size_t>(frame_cache_size_));
@@ -300,6 +326,14 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   digit_recognizer_ = DigitRecognizerFactory::create(
     digit_recognizer_type_,
     recognizer_params,
+    get_logger());
+  box_detector_ = std::make_unique<BoxDetector>(
+    BoxDetector::Params{
+      box_yolo_model_path_,
+      box_confidence_threshold_,
+      box_nms_threshold_,
+      box_max_detections_,
+      box_class_names_},
     get_logger());
 
   target3d_pub_ = create_publisher<dog_interfaces::msg::Target3DArray>(
@@ -542,6 +576,13 @@ void PerceptionNode::synchronizedCallback(
     ++solve_failure_count_;
     frame_history_.push_back(FrameState{begin, 0.0, false});
     return;
+  }
+
+  if (box_detector_) {
+    const auto box_results = box_detector_->detect(image_msg);
+    if (!box_results.targets.empty()) {
+      target3d_msg->target_id += "|box:" + box_results.targets.front().target_id;
+    }
   }
 
   const auto end = now();

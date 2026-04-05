@@ -178,6 +178,10 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("qos_reliability", qos_reliability);
   options.append_parameter_override("digit_recognizer_type", digit_recognizer_type);
   options.append_parameter_override("solver_type", solver_type);
+  options.append_parameter_override("box_yolo_model_path", "/tmp/not_found_boxes_model.pt");
+  options.append_parameter_override(
+    "box_class_names",
+    std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
   return std::make_shared<dog_perception::PerceptionNode>(options);
 }
 
@@ -323,7 +327,10 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
     target_topic,
     rclcpp::SensorDataQoS(),
     [&target_received](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
-      if (!message->targets.empty() && message->targets.front().target_id == "synced_target") {
+      if (
+        !message->targets.empty() &&
+        message->targets.front().target_id.find("synced_target|box:") == 0U)
+      {
         target_received = true;
       }
     });
@@ -401,20 +408,21 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesFiniteTarget3D)
   image_pub->publish(makeImage(stamp));
   cloud_pub->publish(makePointCloudWithXyz(stamp, {
       {1.0F, 2.0F, 3.0F},
-      {2.0F, 3.0F, 4.0F},
-      {3.0F, 4.0F, 5.0F}}));
+      {2.0F, 0.0F, 4.0F},
+      {0.0F, 3.0F, 5.0F},
+      {3.0F, 1.0F, 6.0F}}));
 
   spinFor(executor, std::chrono::milliseconds(250));
 
   ASSERT_TRUE(target_received);
-  EXPECT_EQ(received_msg.target_id, "synced_target");
+  EXPECT_EQ(received_msg.target_id, "synced_target|box:no_box");
   EXPECT_EQ(received_msg.header.frame_id, "base_link");
   EXPECT_TRUE(std::isfinite(received_msg.position.x));
   EXPECT_TRUE(std::isfinite(received_msg.position.y));
   EXPECT_TRUE(std::isfinite(received_msg.position.z));
-  EXPECT_NEAR(received_msg.position.x, 2.0, 1e-4);
-  EXPECT_NEAR(received_msg.position.y, 3.0, 1e-4);
-  EXPECT_NEAR(received_msg.position.z, 4.0, 1e-4);
+  EXPECT_NEAR(received_msg.position.x, 1.5, 1e-3);
+  EXPECT_NEAR(received_msg.position.y, 1.5, 1e-3);
+  EXPECT_NEAR(received_msg.position.z, 4.5, 1e-3);
   EXPECT_GE(perception_node->getSolvedFrameCount(), 1U);
   EXPECT_LT(perception_node->getEndToEndLatencyP95Ms(), 50.0);
 

@@ -14,11 +14,13 @@
 
 #include "dog_perception/target_3d_solver.hpp"
 #include "dog_perception/digit_recognizer.hpp"
+#include "dog_perception/box_detector.hpp"
 
 #include <boost/circular_buffer.hpp>
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace dog_perception
 {
@@ -188,6 +190,11 @@ private:
   std::string digit_yolo_model_path_;
   int digit_temporal_window_;
   int digit_temporal_confirm_count_;
+  std::string box_yolo_model_path_;
+  double box_confidence_threshold_;
+  double box_nms_threshold_;
+  int box_max_detections_;
+  std::vector<std::string> box_class_names_;
   CameraExtrinsics camera_extrinsics_;
   bool qos_compatible_;
   bool idle_spinning_mode_;
@@ -222,6 +229,7 @@ private:
   std::unique_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
   std::unique_ptr<ITarget3DSolver> solver_;
   std::unique_ptr<IDigitRecognizer> digit_recognizer_;
+  std::unique_ptr<BoxDetector> box_detector_;
 
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> image_subscriber_;
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> pointcloud_subscriber_;

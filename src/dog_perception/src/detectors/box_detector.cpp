@@ -1,4 +1,4 @@
-#include "dog_perception/box_detector_node.hpp"
+#include "dog_perception/box_detector.hpp"
 
 #include <sensor_msgs/image_encodings.hpp>
 
@@ -85,26 +85,19 @@ cv::Mat toCvMat(const sensor_msgs::msg::Image & image)
 
 }  // namespace
 
-BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
-: rclcpp::Node("dog_box_detector", options),
-  confidence_threshold_(0.35),
-  nms_threshold_(0.45),
-  max_boxes_(16),
-  class_names_({"type_0", "type_1", "type_2", "type_3"}),
+BoxDetector::BoxDetector(const Params & params, const rclcpp::Logger & logger)
+: model_path_(params.model_path),
+  confidence_threshold_(params.confidence_threshold),
+  nms_threshold_(params.nms_threshold),
+  max_boxes_(params.max_boxes),
+  class_names_(params.class_names),
+  logger_(logger),
   model_load_attempted_(false),
   model_loaded_(false)
 {
-  image_topic_ = declare_parameter<std::string>("image_topic", "/camera/image_raw");
-  box_result_topic_ =
-    declare_parameter<std::string>("box_result_topic", "/target/box_result");
-  model_path_ =
-    declare_parameter<std::string>("box_yolo_model_path", resolveDefaultModelPath());
-  confidence_threshold_ = declare_parameter<double>("box_confidence_threshold", 0.35);
-  nms_threshold_ = declare_parameter<double>("box_nms_threshold", 0.45);
-  max_boxes_ = declare_parameter<int>("box_max_detections", 16);
-  class_names_ = declare_parameter<std::vector<std::string>>(
-    "box_class_names",
-    std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
+  if (model_path_.empty()) {
+    model_path_ = resolveDefaultModelPath();
+  }
 
   if (confidence_threshold_ <= 0.0 || confidence_threshold_ > 1.0) {
     throw std::runtime_error("box_confidence_threshold must be in (0, 1]");
@@ -124,23 +117,14 @@ BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
     }
   }
 
-  result_pub_ =
-    create_publisher<dog_interfaces::msg::Target3DArray>(box_result_topic_, rclcpp::SensorDataQoS());
-  image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-    image_topic_,
-    rclcpp::SensorDataQoS(),
-    std::bind(&BoxDetectorNode::imageCallback, this, std::placeholders::_1));
-
   RCLCPP_INFO(
-    get_logger(),
-    "dog_box_detector initialized, image_topic=%s, box_result_topic=%s, model_path=%s, max_boxes=%d",
-    image_topic_.c_str(),
-    box_result_topic_.c_str(),
+    logger_,
+    "box detector initialized, model_path=%s, max_boxes=%d",
     model_path_.c_str(),
     max_boxes_);
 }
 
-bool BoxDetectorNode::ensureModelLoaded()
+bool BoxDetector::ensureModelLoaded()
 {
   if (model_load_attempted_) {
     return model_loaded_;
@@ -148,24 +132,24 @@ bool BoxDetectorNode::ensureModelLoaded()
 
   model_load_attempted_ = true;
   if (model_path_.empty()) {
-    RCLCPP_ERROR(get_logger(), "box_yolo_model_path is empty");
+    RCLCPP_ERROR(logger_, "box_yolo_model_path is empty");
     return false;
   }
 
   try {
     net_ = cv::dnn::readNet(model_path_);
     if (net_.empty()) {
-      RCLCPP_ERROR(get_logger(), "Failed to load YOLO model from %s", model_path_.c_str());
+      RCLCPP_ERROR(logger_, "Failed to load YOLO model from %s", model_path_.c_str());
       return false;
     }
     net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
     model_loaded_ = true;
-    RCLCPP_INFO(get_logger(), "Loaded YOLO model: %s", model_path_.c_str());
+    RCLCPP_INFO(logger_, "Loaded YOLO model: %s", model_path_.c_str());
     return true;
   } catch (const cv::Exception & exception) {
     RCLCPP_ERROR(
-      get_logger(),
+      logger_,
       "Failed to load YOLO model from %s: %s",
       model_path_.c_str(),
       exception.what());
@@ -173,7 +157,7 @@ bool BoxDetectorNode::ensureModelLoaded()
   }
 }
 
-std::vector<BoxDetectorNode::Detection> BoxDetectorNode::parseDetections(
+std::vector<BoxDetector::Detection> BoxDetector::parseDetections(
   const std::vector<cv::Mat> & outputs,
   int frame_width,
   int frame_height) const
@@ -292,9 +276,9 @@ std::vector<BoxDetectorNode::Detection> BoxDetectorNode::parseDetections(
   return detections;
 }
 
-void BoxDetectorNode::publishNoBox(
+dog_interfaces::msg::Target3DArray BoxDetector::makeNoBox(
   const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
-  const std::string & reason)
+  const std::string & reason) const
 {
   dog_interfaces::msg::Target3DArray message;
   if (image_msg) {
@@ -311,32 +295,24 @@ void BoxDetectorNode::publishNoBox(
   target.confidence = 0.0F;
   message.targets.push_back(target);
 
-  result_pub_->publish(message);
-
-  RCLCPP_INFO_THROTTLE(
-    get_logger(),
-    *get_clock(),
-    1000,
-    "No box detected: %s",
-    reason.c_str());
+  RCLCPP_INFO(logger_, "No box detected: %s", reason.c_str());
+  return message;
 }
 
-void BoxDetectorNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
+dog_interfaces::msg::Target3DArray BoxDetector::detect(
+  const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
 {
   if (!image_msg) {
-    publishNoBox(image_msg, "null_image");
-    return;
+    return makeNoBox(image_msg, "null_image");
   }
 
   cv::Mat frame = toCvMat(*image_msg);
   if (frame.empty()) {
-    publishNoBox(image_msg, "invalid_image_or_encoding");
-    return;
+    return makeNoBox(image_msg, "invalid_image_or_encoding");
   }
 
   if (!ensureModelLoaded()) {
-    publishNoBox(image_msg, "model_unavailable");
-    return;
+    return makeNoBox(image_msg, "model_unavailable");
   }
 
   if (frame.channels() == 1) {
@@ -358,20 +334,17 @@ void BoxDetectorNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPt
     net_.setInput(blob);
     net_.forward(outputs, net_.getUnconnectedOutLayersNames());
   } catch (const cv::Exception & exception) {
-    RCLCPP_ERROR(get_logger(), "OpenCV DNN infer failed: %s", exception.what());
-    publishNoBox(image_msg, "dnn_infer_failed");
-    return;
+    RCLCPP_ERROR(logger_, "OpenCV DNN infer failed: %s", exception.what());
+    return makeNoBox(image_msg, "dnn_infer_failed");
   }
 
   if (outputs.empty()) {
-    publishNoBox(image_msg, "empty_output");
-    return;
+    return makeNoBox(image_msg, "empty_output");
   }
 
   auto detections = parseDetections(outputs, frame.cols, frame.rows);
   if (detections.empty()) {
-    publishNoBox(image_msg, "no_detection");
-    return;
+    return makeNoBox(image_msg, "no_detection");
   }
 
   const float width_f = static_cast<float>(std::max(1, frame.cols));
@@ -399,7 +372,7 @@ void BoxDetectorNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPt
     ++index;
   }
 
-  result_pub_->publish(message_array);
+  return message_array;
 }
 
 }  // namespace dog_perception
