@@ -16,25 +16,38 @@ namespace dog_perception
 namespace
 {
 
+/// @brief 基于 OpenCV DNN 的 YOLO 数字识别器实现。
+///
+/// 该实现负责：
+/// 1) 按需加载 YOLO 模型；
+/// 2) 对输入图像进行 ROI 裁剪与预处理；
+/// 3) 执行前向推理并解析输出，返回置信度最高的数字结果。
 class OpencvDnnYoloDigitRecognizer final : public IDigitRecognizer
 {
 public:
+  /// @brief 构造识别器并保存运行参数与日志对象。
   OpencvDnnYoloDigitRecognizer(const DigitRecognizerParams & params, const rclcpp::Logger & logger)
   : params_(params), logger_(logger)
   {
   }
 
+  /// @brief 对单帧图像执行数字识别。
+  /// @param view 输入图像视图。
+  /// @return 识别结果（是否成功、标签、置信度与状态码）。
   DigitRecognitionResult infer(const ImageView & view) override
   {
+    // 输入空指针保护。
     if (!view.image) {
       return DigitRecognitionResult{false, -1, 0.0F, "null_image"};
     }
 
     const auto & image = *view.image;
+    // 基本图像有效性校验。
     if (image.width == 0U || image.height == 0U || image.data.empty()) {
       return DigitRecognitionResult{false, -1, 0.0F, "invalid_image"};
     }
 
+    // 懒加载模型，首次失败后将不再重复尝试。
     if (!ensureModelLoaded()) {
       return DigitRecognitionResult{false, -1, 0.0F, "model_unavailable"};
     }
@@ -51,6 +64,7 @@ public:
     const int roi_w = std::max(1, std::min(params_.roi_width, image_width - roi_x));
     const int roi_h = std::max(1, std::min(params_.roi_height, image_height - roi_y));
 
+    // ROI 统一限制在图像边界内，避免越界访问。
     const cv::Rect roi(roi_x, roi_y, roi_w, roi_h);
     if (roi.empty()) {
       return DigitRecognitionResult{false, -1, 0.0F, "empty_roi"};
@@ -61,6 +75,7 @@ public:
       cv::cvtColor(roi_image, roi_image, cv::COLOR_GRAY2BGR);
     }
 
+    // ROS RGB8 需要交换 R/B 通道，BGR8 则保持原样。
     const bool swap_rb = image.encoding == sensor_msgs::image_encodings::RGB8;
     cv::Mat blob = cv::dnn::blobFromImage(
       roi_image,
@@ -96,6 +111,8 @@ public:
   }
 
 private:
+  /// @brief 将 ROS Image 映射为 OpenCV Mat（零拷贝视图）。
+  /// @note 仅支持 MONO8、BGR8、RGB8；若步长/布局异常则返回空 Mat。
   static cv::Mat toCvMat(const sensor_msgs::msg::Image & image)
   {
     const size_t expected_size = static_cast<size_t>(image.step) * static_cast<size_t>(image.height);
@@ -126,6 +143,9 @@ private:
     return cv::Mat();
   }
 
+  /// @brief 确保模型已加载。
+  /// @return 模型可用时返回 true，否则返回 false。
+  /// @note 该函数只在首次调用时尝试加载，后续直接复用结果。
   bool ensureModelLoaded()
   {
     if (model_load_attempted_) {
@@ -159,10 +179,16 @@ private:
     }
   }
 
+  /// @brief 解析 YOLO 输出并更新当前最佳类别与置信度。
+  ///
+  /// 兼容两类常见输出格式：
+  /// 1) [x, y, w, h, obj, cls1, cls2, ...]；
+  /// 2) [x, y, w, h, score, label]。
   static void parseOutputs(const std::vector<cv::Mat> & outputs, int & best_label, float & best_score)
   {
     for (const auto & output : outputs) {
       cv::Mat rows_view;
+      // 将 3D 输出拍平为按候选框逐行遍历的 2D 视图。
       if (output.dims == 3 && output.size[0] == 1) {
         rows_view = output.reshape(1, output.size[1]);
       } else if (output.dims == 2) {
@@ -180,6 +206,7 @@ private:
         float score = 0.0F;
         int label = -1;
 
+        // YOLO 风格输出：类别分数与 objectness 相乘得到最终置信度。
         if (rows_view.cols > 6) {
           const float objectness = data[4];
           const auto class_begin = data + 5;
@@ -203,10 +230,15 @@ private:
     }
   }
 
+  /// 识别器参数（ROI、阈值、模型路径等）。
   DigitRecognizerParams params_;
+  /// ROS 日志句柄。
   rclcpp::Logger logger_;
+  /// OpenCV DNN 网络对象。
   cv::dnn::Net net_;
+  /// 是否已经执行过模型加载尝试。
   bool model_load_attempted_{false};
+  /// 模型是否加载成功。
   bool model_loaded_{false};
 };
 
@@ -214,6 +246,7 @@ private:
 
 bool registerOpencvDnnYoloDigitRecognizer()
 {
+  // 将该实现注册到工厂，供配置项 "opencv_dnn_yolo" 动态创建。
   return registerDigitRecognizer(
     "opencv_dnn_yolo",
     [](const DigitRecognizerParams & params, const rclcpp::Logger & logger) {
