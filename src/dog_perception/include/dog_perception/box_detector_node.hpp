@@ -1,6 +1,7 @@
 #pragma once
 
 #include <dog_interfaces/msg/target3_d.hpp>
+#include <dog_interfaces/msg/target3_d_array.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
@@ -65,7 +66,7 @@ private:
   bool model_loaded_;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
-  rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr result_pub_;
+  rclcpp::Publisher<dog_interfaces::msg::Target3DArray>::SharedPtr result_pub_;
 };
 
 }  // namespace dog_perception

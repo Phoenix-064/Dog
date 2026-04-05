@@ -271,7 +271,7 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     estop_topic_,
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
     std::bind(&LifecycleNode::estopCallback, this, std::placeholders::_1));
-  valid_frame_sub_ = create_subscription<dog_interfaces::msg::Target3D>(
+  valid_frame_sub_ = create_subscription<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic_,
     rclcpp::SensorDataQoS(),
     std::bind(&LifecycleNode::validFrameCallback, this, std::placeholders::_1));
@@ -761,7 +761,7 @@ void LifecycleNode::processGraspFeedback(const GraspFeedbackEvent & event)
   }
 }
 
-void LifecycleNode::validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg)
+void LifecycleNode::validFrameCallback(const dog_interfaces::msg::Target3DArray::ConstSharedPtr msg)
 {
   if (!isValidFrameMessage(msg)) {
     return;
@@ -1197,7 +1197,7 @@ void LifecycleNode::publishHealthAlarm(
     since_last_valid_frame_ms);
 }
 
-bool LifecycleNode::isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const
+bool LifecycleNode::isValidFrameMessage(const dog_interfaces::msg::Target3DArray::ConstSharedPtr & msg) const
 {
   if (!msg) {
     return false;
@@ -1207,19 +1207,27 @@ bool LifecycleNode::isValidFrameMessage(const dog_interfaces::msg::Target3D::Con
     return false;
   }
 
-  if (
-    !std::isfinite(msg->position.x) ||
-    !std::isfinite(msg->position.y) ||
-    !std::isfinite(msg->position.z))
-  {
+  if (msg->targets.empty()) {
     return false;
   }
 
-  if (!std::isfinite(msg->confidence) || msg->confidence <= 0.0F) {
-    return false;
+  for (const auto & target : msg->targets) {
+    if (
+      !std::isfinite(target.position.x) ||
+      !std::isfinite(target.position.y) ||
+      !std::isfinite(target.position.z))
+    {
+      continue;
+    }
+
+    if (!std::isfinite(target.confidence) || target.confidence <= 0.0F) {
+      continue;
+    }
+
+    return true;
   }
 
-  return true;
+  return false;
 }
 
 const char * LifecycleNode::feedbackTypeToString(GraspFeedbackType type)

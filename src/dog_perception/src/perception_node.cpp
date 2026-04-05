@@ -302,8 +302,10 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
     recognizer_params,
     get_logger());
 
-  target3d_pub_ = create_publisher<dog_interfaces::msg::Target3D>(target3d_topic_, rclcpp::SensorDataQoS());
-  digit_result_pub_ = create_publisher<dog_interfaces::msg::Target3D>(
+  target3d_pub_ = create_publisher<dog_interfaces::msg::Target3DArray>(
+    target3d_topic_,
+    rclcpp::SensorDataQoS());
+  digit_result_pub_ = create_publisher<dog_interfaces::msg::Target3DArray>(
     digit_result_topic_,
     rclcpp::SensorDataQoS());
 
@@ -565,7 +567,10 @@ void PerceptionNode::synchronizedCallback(
 
   frame_history_.push_back(FrameState{end, elapsed_ms, true});
 
-  target3d_pub_->publish(std::move(target3d_msg));
+  dog_interfaces::msg::Target3DArray target3d_array_msg;
+  target3d_array_msg.header = target3d_msg->header;
+  target3d_array_msg.targets.push_back(*target3d_msg);
+  target3d_pub_->publish(std::move(target3d_array_msg));
 }
 
 void PerceptionNode::imageStampCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
@@ -739,7 +744,10 @@ bool PerceptionNode::publishExtrapolatedTarget(
     }
   }
 
-  target3d_pub_->publish(extrapolated);
+  dog_interfaces::msg::Target3DArray message;
+  message.header = extrapolated.header;
+  message.targets.push_back(extrapolated);
+  target3d_pub_->publish(std::move(message));
   extrapolation_active_ = true;
   ++extrapolation_trigger_count_;
   has_last_extrapolation_pub_time_ = true;
@@ -764,12 +772,16 @@ void PerceptionNode::publishIdleSpinningPose(const rclcpp::Time & current_time)
     }
   }
 
-  dog_interfaces::msg::Target3D message;
-  message.header.stamp = current_time;
-  message.header.frame_id = camera_extrinsics_.frame_id;
-  message.target_id = "idle_spinning";
-  message.confidence = 0.0F;
-  target3d_pub_->publish(message);
+  dog_interfaces::msg::Target3D target;
+  target.header.stamp = current_time;
+  target.header.frame_id = camera_extrinsics_.frame_id;
+  target.target_id = "idle_spinning";
+  target.confidence = 0.0F;
+
+  dog_interfaces::msg::Target3DArray message;
+  message.header = target.header;
+  message.targets.push_back(target);
+  target3d_pub_->publish(std::move(message));
   has_last_idle_publish_time_ = true;
   last_idle_publish_time_ = current_time;
 }
@@ -809,7 +821,10 @@ void PerceptionNode::processDigitRecognition(
   }
 
   auto message = toDigitTarget3D(image_msg, camera_extrinsics_.frame_id, result);
-  digit_result_pub_->publish(message);
+  dog_interfaces::msg::Target3DArray message_array;
+  message_array.header = message.header;
+  message_array.targets.push_back(message);
+  digit_result_pub_->publish(std::move(message_array));
 
   const auto end = now();
   const double elapsed_ms = static_cast<double>((end - begin).nanoseconds()) / 1e6;

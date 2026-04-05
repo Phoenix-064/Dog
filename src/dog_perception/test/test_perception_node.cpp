@@ -319,11 +319,11 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   bool target_received = false;
-  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     target_topic,
     rclcpp::SensorDataQoS(),
-    [&target_received](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      if (message->target_id == "synced_target") {
+    [&target_received](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty() && message->targets.front().target_id == "synced_target") {
         target_received = true;
       }
     });
@@ -381,12 +381,15 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesFiniteTarget3D)
 
   bool target_received = false;
   dog_interfaces::msg::Target3D received_msg;
-  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     target_topic,
     rclcpp::SensorDataQoS(),
-    [&target_received, &received_msg](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
+    [&target_received, &received_msg](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (message->targets.empty()) {
+        return;
+      }
       target_received = true;
-      received_msg = *message;
+      received_msg = message->targets.front();
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -450,10 +453,10 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsPointCloudWithoutXyzFields)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   bool target_received = false;
-  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     target_topic,
     rclcpp::SensorDataQoS(),
-    [&target_received](const dog_interfaces::msg::Target3D::ConstSharedPtr) { target_received = true; });
+    [&target_received](const dog_interfaces::msg::Target3DArray::ConstSharedPtr) { target_received = true; });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(perception_node);
@@ -504,10 +507,10 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsAllNonFinitePoints)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   bool target_received = false;
-  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     target_topic,
     rclcpp::SensorDataQoS(),
-    [&target_received](const dog_interfaces::msg::Target3D::ConstSharedPtr) { target_received = true; });
+    [&target_received](const dog_interfaces::msg::Target3DArray::ConstSharedPtr) { target_received = true; });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(perception_node);
@@ -563,11 +566,11 @@ TEST_F(PerceptionNodeTest, SingleSideDropoutTriggersExtrapolationAndThenRecovers
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
 
   size_t extrapolated_count = 0U;
-  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     target_topic,
     rclcpp::SensorDataQoS(),
-    [&extrapolated_count](const dog_interfaces::msg::Target3D::ConstSharedPtr msg) {
-      if (msg->target_id == "extrapolated_target") {
+    [&extrapolated_count](const dog_interfaces::msg::Target3DArray::ConstSharedPtr msg) {
+      if (!msg->targets.empty() && msg->targets.front().target_id == "extrapolated_target") {
         ++extrapolated_count;
       }
     });
@@ -637,11 +640,13 @@ TEST_F(PerceptionNodeTest, DigitRecognitionPublishesSemanticResult)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   std::string received_target_id;
-  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     digit_topic,
     rclcpp::SensorDataQoS(),
-    [&received_target_id](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      received_target_id = message->target_id;
+    [&received_target_id](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty()) {
+        received_target_id = message->targets.front().target_id;
+      }
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -696,11 +701,13 @@ TEST_F(PerceptionNodeTest, LowConfidenceDigitIsDowngradedToNoFeature)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   std::string received_target_id;
-  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     digit_topic,
     rclcpp::SensorDataQoS(),
-    [&received_target_id](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      received_target_id = message->target_id;
+    [&received_target_id](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty()) {
+        received_target_id = message->targets.front().target_id;
+      }
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -747,11 +754,13 @@ TEST_F(PerceptionNodeTest, GlareFrameIsSuppressedToNoFeature)
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
   std::string received_target_id;
-  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     digit_topic,
     rclcpp::SensorDataQoS(),
-    [&received_target_id](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      received_target_id = message->target_id;
+    [&received_target_id](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty()) {
+        received_target_id = message->targets.front().target_id;
+      }
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -802,15 +811,19 @@ TEST_F(PerceptionNodeTest, DetectorTypeSwitchKeepsOutputContract)
   std::string received_target_id;
   std::string received_frame_id;
   float received_confidence = -1.0F;
-  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     digit_topic,
     rclcpp::SensorDataQoS(),
     [&received, &received_target_id, &received_frame_id,
-      &received_confidence](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
+      &received_confidence](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (message->targets.empty()) {
+        return;
+      }
+      const auto & target = message->targets.front();
       received = true;
-      received_target_id = message->target_id;
-      received_frame_id = message->header.frame_id;
-      received_confidence = message->confidence;
+      received_target_id = target.target_id;
+      received_frame_id = target.header.frame_id;
+      received_confidence = target.confidence;
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;

@@ -3,6 +3,7 @@
 #include "dog_lifecycle/state_store.hpp"
 
 #include <dog_interfaces/msg/target3_d.hpp>
+#include <dog_interfaces/msg/target3_d_array.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 
@@ -117,14 +118,14 @@ private:
   void estopCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   /// @brief 跟踪有效感知帧，用于心跳恢复判定。
   /// @param msg 感知目标帧。
-  void validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg);
+  void validFrameCallback(const dog_interfaces::msg::Target3DArray::ConstSharedPtr msg);
   /// @brief 消费重连流程中的迁移状态确认。
   /// @param msg 迁移状态负载。
   void lifecycleTransitionStatusCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   /// @brief 校验输入目标帧是否满足健康数据条件。
   /// @param msg 目标帧消息。
   /// @return 帧内容有效时返回 true。
-  bool isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const;
+  bool isValidFrameMessage(const dog_interfaces::msg::Target3DArray::ConstSharedPtr & msg) const;
   /// @brief 将原始抓取反馈负载解析为结构化事件。
   /// @param payload 原始反馈负载。
   /// @param stamp 接收时间戳。
@@ -270,7 +271,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr grasp_feedback_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr degrade_ack_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr estop_sub_;
-  rclcpp::Subscription<dog_interfaces::msg::Target3D>::SharedPtr valid_frame_sub_;
+  rclcpp::Subscription<dog_interfaces::msg::Target3DArray>::SharedPtr valid_frame_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_transition_status_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;

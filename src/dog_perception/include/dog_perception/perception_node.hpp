@@ -2,6 +2,7 @@
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <dog_interfaces/msg/target3_d.hpp>
+#include <dog_interfaces/msg/target3_d_array.hpp>
 #include <message_filters/subscriber.hpp>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
@@ -230,8 +231,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_mode_sub_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
-  rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr target3d_pub_;
-  rclcpp::Publisher<dog_interfaces::msg::Target3D>::SharedPtr digit_result_pub_;
+  rclcpp::Publisher<dog_interfaces::msg::Target3DArray>::SharedPtr target3d_pub_;
+  rclcpp::Publisher<dog_interfaces::msg::Target3DArray>::SharedPtr digit_result_pub_;
 };
 
 }  // namespace dog_perception

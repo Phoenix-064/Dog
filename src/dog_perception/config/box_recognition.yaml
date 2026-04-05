@@ -5,5 +5,5 @@ dog_box_detector:
     box_yolo_model_path: "boxes_detector.pt"
     box_confidence_threshold: 0.35
     box_nms_threshold: 0.45
-    box_max_detections: 8
+    box_max_detections: 16
     box_class_names: ["type_0", "type_1", "type_2", "type_3"]

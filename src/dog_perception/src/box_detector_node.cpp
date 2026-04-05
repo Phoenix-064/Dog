@@ -89,7 +89,7 @@ BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dog_box_detector", options),
   confidence_threshold_(0.35),
   nms_threshold_(0.45),
-  max_boxes_(8),
+  max_boxes_(16),
   class_names_({"type_0", "type_1", "type_2", "type_3"}),
   model_load_attempted_(false),
   model_loaded_(false)
@@ -101,7 +101,7 @@ BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
     declare_parameter<std::string>("box_yolo_model_path", resolveDefaultModelPath());
   confidence_threshold_ = declare_parameter<double>("box_confidence_threshold", 0.35);
   nms_threshold_ = declare_parameter<double>("box_nms_threshold", 0.45);
-  max_boxes_ = declare_parameter<int>("box_max_detections", 8);
+  max_boxes_ = declare_parameter<int>("box_max_detections", 16);
   class_names_ = declare_parameter<std::vector<std::string>>(
     "box_class_names",
     std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
@@ -112,8 +112,8 @@ BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
   if (nms_threshold_ <= 0.0 || nms_threshold_ > 1.0) {
     throw std::runtime_error("box_nms_threshold must be in (0, 1]");
   }
-  if (max_boxes_ <= 0 || max_boxes_ > 8) {
-    throw std::runtime_error("box_max_detections must be in [1, 8]");
+  if (max_boxes_ <= 0 || max_boxes_ > 16) {
+    throw std::runtime_error("box_max_detections must be in [1, 16]");
   }
   if (class_names_.size() != static_cast<size_t>(kExpectedClassCount)) {
     throw std::runtime_error("box_class_names must provide exactly 4 class labels");
@@ -125,7 +125,7 @@ BoxDetectorNode::BoxDetectorNode(const rclcpp::NodeOptions & options)
   }
 
   result_pub_ =
-    create_publisher<dog_interfaces::msg::Target3D>(box_result_topic_, rclcpp::SensorDataQoS());
+    create_publisher<dog_interfaces::msg::Target3DArray>(box_result_topic_, rclcpp::SensorDataQoS());
   image_sub_ = create_subscription<sensor_msgs::msg::Image>(
     image_topic_,
     rclcpp::SensorDataQoS(),
@@ -296,16 +296,21 @@ void BoxDetectorNode::publishNoBox(
   const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
   const std::string & reason)
 {
-  dog_interfaces::msg::Target3D message;
+  dog_interfaces::msg::Target3DArray message;
   if (image_msg) {
     message.header.stamp = image_msg->header.stamp;
     message.header.frame_id = image_msg->header.frame_id;
   }
-  message.target_id = "no_box";
-  message.position.x = 0.0;
-  message.position.y = 0.0;
-  message.position.z = 0.0;
-  message.confidence = 0.0F;
+
+  dog_interfaces::msg::Target3D target;
+  target.header = message.header;
+  target.target_id = "no_box";
+  target.position.x = 0.0;
+  target.position.y = 0.0;
+  target.position.z = 0.0;
+  target.confidence = 0.0F;
+  message.targets.push_back(target);
+
   result_pub_->publish(message);
 
   RCLCPP_INFO_THROTTLE(
@@ -373,6 +378,10 @@ void BoxDetectorNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPt
   const float height_f = static_cast<float>(std::max(1, frame.rows));
   const float area_f = width_f * height_f;
 
+  dog_interfaces::msg::Target3DArray message_array;
+  message_array.header = image_msg->header;
+  message_array.targets.reserve(detections.size());
+
   int index = 0;
   for (const auto & detection : detections) {
     dog_interfaces::msg::Target3D message;
@@ -386,9 +395,11 @@ void BoxDetectorNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPt
     message.position.z = static_cast<double>(detection.width * detection.height) /
       static_cast<double>(area_f);
     message.confidence = detection.confidence;
-    result_pub_->publish(message);
+    message_array.targets.push_back(std::move(message));
     ++index;
   }
+
+  result_pub_->publish(message_array);
 }
 
 }  // namespace dog_perception

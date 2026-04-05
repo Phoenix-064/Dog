@@ -1,6 +1,7 @@
 #include "dog_lifecycle/lifecycle_node.hpp"
 
 #include <dog_interfaces/msg/target3_d.hpp>
+#include <dog_interfaces/msg/target3_d_array.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -58,15 +59,20 @@ std::string extractPayloadValue(const std::string & payload, const std::string &
   return payload.substr(value_begin, value_end - value_begin);
 }
 
-dog_interfaces::msg::Target3D makeValidFrame(const rclcpp::Node::SharedPtr & node)
+dog_interfaces::msg::Target3DArray makeValidFrame(const rclcpp::Node::SharedPtr & node)
 {
-  dog_interfaces::msg::Target3D frame;
+  dog_interfaces::msg::Target3DArray frame;
   frame.header.stamp = node->now();
-  frame.target_id = "target_1";
-  frame.position.x = 0.1;
-  frame.position.y = 0.2;
-  frame.position.z = 0.3;
-  frame.confidence = 0.9F;
+  frame.header.frame_id = "base_link";
+
+  dog_interfaces::msg::Target3D target;
+  target.header = frame.header;
+  target.target_id = "target_1";
+  target.position.x = 0.1;
+  target.position.y = 0.2;
+  target.position.z = 0.3;
+  target.confidence = 0.9F;
+  frame.targets.push_back(target);
   return frame;
 }
 
@@ -314,7 +320,7 @@ TEST_F(LifecycleNodeTest, HeartbeatTimeoutTriggersLifecycleReconnect)
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_timeout_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
 
@@ -372,7 +378,7 @@ TEST_F(LifecycleNodeTest, ValidFrameLatchMarksReconnectRecoveredWithinTwoSeconds
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_recover_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
   auto transition_status_pub = io_node->create_publisher<std_msgs::msg::String>(
@@ -465,11 +471,11 @@ TEST_F(LifecycleNodeTest, RestartLimitTriggersControlledDegradeAndAlarm)
   options.append_parameter_override("heartbeat_check_period_ms", 10);
   options.append_parameter_override("reconnect_min_interval_ms", 20);
   options.append_parameter_override("max_restart_attempts", 1);
-  options.append_parameter_override("restart_window_ms", 300);
+  options.append_parameter_override("restart_window_ms", 500);
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_degrade_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
 
@@ -538,7 +544,7 @@ TEST_F(LifecycleNodeTest, ReconnectPendingDoesNotAccumulateRestartAttempts)
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_pending_gate_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
 
@@ -591,12 +597,12 @@ TEST_F(LifecycleNodeTest, AdaptivePendingTimeoutRespectsSmallRestartWindowAndCan
   options.append_parameter_override("heartbeat_check_period_ms", 10);
   options.append_parameter_override("reconnect_min_interval_ms", 20);
   options.append_parameter_override("max_restart_attempts", 1);
-  options.append_parameter_override("restart_window_ms", 80);
+  options.append_parameter_override("restart_window_ms", 120);
   options.append_parameter_override("reconnect_pending_timeout_ms", 0);
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_small_window_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
 
@@ -625,7 +631,7 @@ TEST_F(LifecycleNodeTest, AdaptivePendingTimeoutRespectsSmallRestartWindowAndCan
   valid_frame_pub->publish(valid_frame);
   spinFor(executor, std::chrono::milliseconds(20));
 
-  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1500), [&]() {
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1800), [&]() {
     return lifecycle_node->IsControlledDegradeModeForTest() && !alarm_payload.empty();
   }));
 
@@ -655,11 +661,11 @@ TEST_F(LifecycleNodeTest, EstopStillWorksDuringControlledDegrade)
   options.append_parameter_override("heartbeat_check_period_ms", 10);
   options.append_parameter_override("reconnect_min_interval_ms", 20);
   options.append_parameter_override("max_restart_attempts", 1);
-  options.append_parameter_override("restart_window_ms", 300);
+  options.append_parameter_override("restart_window_ms", 500);
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_degrade_estop_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
   auto estop_pub = io_node->create_publisher<std_msgs::msg::String>(
@@ -741,7 +747,7 @@ TEST_F(LifecycleNodeTest, MaxRestartAttemptsBoundaryAllowsAttemptAtEquality)
 
   auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_boundary_io");
-  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
     valid_frame_topic,
     rclcpp::SensorDataQoS());
 

@@ -13,6 +13,7 @@ find_package(sensor_msgs REQUIRED)
 
 set(msg_files
   "msg/Target3D.msg"
+  "msg/Target3DArray.msg"
 )
 
 set(srv_files

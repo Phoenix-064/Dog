@@ -117,11 +117,11 @@ TEST_F(BoxDetectorNodeTest, PublishesNoBoxWhenModelUnavailable)
   auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
 
   bool received_no_box = false;
-  auto result_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto result_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     result_topic,
     rclcpp::SensorDataQoS(),
-    [&received_no_box](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      if (message->target_id == "no_box") {
+    [&received_no_box](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty() && message->targets.front().target_id == "no_box") {
         received_no_box = true;
       }
     });
@@ -152,11 +152,11 @@ TEST_F(BoxDetectorNodeTest, PublishesNoBoxOnInvalidImage)
   auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
 
   int no_box_count = 0;
-  auto result_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+  auto result_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     result_topic,
     rclcpp::SensorDataQoS(),
-    [&no_box_count](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
-      if (message->target_id == "no_box") {
+    [&no_box_count](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      if (!message->targets.empty() && message->targets.front().target_id == "no_box") {
         ++no_box_count;
       }
     });
