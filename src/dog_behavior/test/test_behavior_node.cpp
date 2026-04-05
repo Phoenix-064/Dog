@@ -1,12 +1,16 @@
 #include "dog_behavior/behavior_node.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include <dog_interfaces/action/execute_behavior.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -290,6 +294,92 @@ TEST_F(BehaviorNodeTest, ConvertsOdometryToPoseStampedAndPublishes)
   EXPECT_DOUBLE_EQ(captured.pose.position.z, odom.pose.pose.position.z);
   EXPECT_DOUBLE_EQ(captured.pose.orientation.z, odom.pose.pose.orientation.z);
   EXPECT_DOUBLE_EQ(captured.pose.orientation.w, odom.pose.pose.orientation.w);
+
+  executor.remove_node(io_node);
+  executor.remove_node(behavior_node);
+  (void)pose_sub;
+}
+
+TEST_F(BehaviorNodeTest, PosePublishLatencyJitterStaysWithinFiveMilliseconds)
+{
+  const std::string odom_topic = "/test/localization/jitter";
+  const std::string pose_topic = "/test/global_pose/jitter";
+  constexpr int kSampleCount = 30;
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("global_pose_topic", pose_topic);
+  options.append_parameter_override("localization_topic", odom_topic);
+  options.append_parameter_override("default_frame_id", "map");
+
+  auto behavior_node = std::make_shared<dog_behavior::BehaviorNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("behavior_test_io_jitter");
+
+  std::mutex sample_mutex;
+  std::unordered_map<int, std::chrono::steady_clock::time_point> send_times;
+  std::vector<double> latencies_ms;
+
+  auto pose_sub = io_node->create_subscription<geometry_msgs::msg::PoseStamped>(
+    pose_topic,
+    rclcpp::QoS(rclcpp::KeepLast(20)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&sample_mutex, &send_times, &latencies_ms](
+      const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
+      const int seq = static_cast<int>(msg->pose.position.x);
+      const auto receive_time = std::chrono::steady_clock::now();
+
+      std::lock_guard<std::mutex> lock(sample_mutex);
+      const auto it = send_times.find(seq);
+      if (it == send_times.end()) {
+        return;
+      }
+
+      const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
+        receive_time - it->second);
+      latencies_ms.push_back(static_cast<double>(latency.count()) / 1000.0);
+    });
+
+  auto odom_pub = io_node->create_publisher<nav_msgs::msg::Odometry>(
+    odom_topic,
+    rclcpp::SensorDataQoS().keep_last(20));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(behavior_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitForTopicMatch(executor, io_node, odom_topic, pose_topic, std::chrono::milliseconds(800)));
+
+  for (int i = 0; i < kSampleCount; ++i) {
+    nav_msgs::msg::Odometry odom;
+    odom.header.stamp = behavior_node->now();
+    odom.header.frame_id = "map";
+    odom.pose.pose.position.x = static_cast<double>(i);
+    odom.pose.pose.orientation.w = 1.0;
+
+    {
+      std::lock_guard<std::mutex> lock(sample_mutex);
+      send_times[i] = std::chrono::steady_clock::now();
+    }
+
+    odom_pub->publish(odom);
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(12));
+  }
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::seconds(2), [&sample_mutex, &latencies_ms]() {
+    std::lock_guard<std::mutex> lock(sample_mutex);
+    return latencies_ms.size() >= kSampleCount;
+  }));
+
+  double min_latency_ms = std::numeric_limits<double>::max();
+  double max_latency_ms = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(sample_mutex);
+    ASSERT_EQ(latencies_ms.size(), static_cast<size_t>(kSampleCount));
+    min_latency_ms = *std::min_element(latencies_ms.begin(), latencies_ms.end());
+    max_latency_ms = *std::max_element(latencies_ms.begin(), latencies_ms.end());
+  }
+
+  const double jitter_ms = max_latency_ms - min_latency_ms;
+  EXPECT_LT(jitter_ms, 5.0);
 
   executor.remove_node(io_node);
   executor.remove_node(behavior_node);
