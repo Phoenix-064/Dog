@@ -1,8 +1,5 @@
-build/dog_behavior/Testing/20260402-0745/Test.xml: 1 test, 0 errors, 0 failures, 0 skipped
-build/dog_behavior/test_results/dog_behavior/test_behavior_node.gtest.xml: 1 test, 0 errors, 0 failures, 0 skipped
-build/dog_lifecycle/Testing/20260402-0745/Test.xml: 1 test, 0 errors, 0 failures, 0 skipped
-build/dog_lifecycle/test_results/dog_lifecycle/test_lifecycle_node.gtest.xml: 1 test, 0 errors, 0 failures, 0 skipped
-build/dog_perception/Testing/20260403-1109/Test.xml: 1 test, 0 errors, 0 failures, 0 skipped
-build/dog_perception/test_results/dog_perception/test_perception_node.gtest.xml: 8 tests, 0 errors, 0 failures, 0 skipped
+build/dog_perception/Testing/20260405-0831/Test.xml: 2 tests, 0 errors, 0 failures, 0 skipped
+build/dog_perception/test_results/dog_perception/test_digit_recognizer_factory.gtest.xml: 5 tests, 0 errors, 0 failures, 0 skipped
+build/dog_perception/test_results/dog_perception/test_perception_node.gtest.xml: 14 tests, 0 errors, 0 failures, 0 skipped
 
-Summary: 13 tests, 0 errors, 0 failures, 0 skipped
+Summary: 21 tests, 0 errors, 0 failures, 0 skipped

@@ -3,19 +3,25 @@
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/point_field.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
 #include <chrono>
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
+#include <limits>
 #include <regex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -94,6 +100,45 @@ sensor_msgs::msg::PointCloud2 makePointCloud(const rclcpp::Time & stamp, uint32_
   return cloud;
 }
 
+sensor_msgs::msg::PointCloud2 makePointCloudWithXyz(
+  const rclcpp::Time & stamp,
+  const std::vector<std::array<float, 3>> & points)
+{
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = stamp;
+  cloud.header.frame_id = "base_link";
+  cloud.height = 1U;
+  cloud.width = static_cast<uint32_t>(points.size());
+
+  cloud.fields.resize(3);
+  cloud.fields[0].name = "x";
+  cloud.fields[0].offset = 0U;
+  cloud.fields[0].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[0].count = 1U;
+  cloud.fields[1].name = "y";
+  cloud.fields[1].offset = 4U;
+  cloud.fields[1].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[1].count = 1U;
+  cloud.fields[2].name = "z";
+  cloud.fields[2].offset = 8U;
+  cloud.fields[2].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[2].count = 1U;
+
+  cloud.point_step = 12U;
+  cloud.row_step = cloud.point_step * cloud.width;
+  cloud.is_dense = false;
+  cloud.data.resize(static_cast<size_t>(cloud.row_step), 0U);
+
+  for (size_t i = 0; i < points.size(); ++i) {
+    const size_t offset = i * static_cast<size_t>(cloud.point_step);
+    std::memcpy(&cloud.data[offset + 0U], &points[i][0], sizeof(float));
+    std::memcpy(&cloud.data[offset + 4U], &points[i][1], sizeof(float));
+    std::memcpy(&cloud.data[offset + 8U], &points[i][2], sizeof(float));
+  }
+
+  return cloud;
+}
+
 std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   const std::string & yaml_path,
   const std::string & image_topic,
@@ -106,7 +151,8 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   int dropout_timeout_ms = 150,
   const std::string & lifecycle_mode_topic = "/test/lifecycle/system_mode/default",
   int digit_temporal_confirm_count = 2,
-  const std::string & digit_recognizer_type = "heuristic")
+  const std::string & digit_recognizer_type = "heuristic",
+  const std::string & solver_type = "mock_minimal")
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("extrinsics_yaml_path", yaml_path);
@@ -131,7 +177,7 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("digit_glare_ratio_threshold", 0.35);
   options.append_parameter_override("qos_reliability", qos_reliability);
   options.append_parameter_override("digit_recognizer_type", digit_recognizer_type);
-  options.append_parameter_override("solver_type", "mock_minimal");
+  options.append_parameter_override("solver_type", solver_type);
   return std::make_shared<dog_perception::PerceptionNode>(options);
 }
 
@@ -298,6 +344,187 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
   EXPECT_GE(perception_node->getLatencySampleCount(), 1U);
   EXPECT_LT(perception_node->getLatencyP95Ms(), 50.0);
   EXPECT_LT(perception_node->getEndToEndLatencyP95Ms(), 50.0);
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)target_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesFiniteTarget3D)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/minimal_pnp";
+  const std::string cloud_topic = "/test/cloud/minimal_pnp";
+  const std::string target_topic = "/test/target/minimal_pnp";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    "/test/digit/minimal_pnp",
+    8,
+    "best_effort",
+    50,
+    150,
+    "/test/lifecycle/system_mode/minimal_pnp",
+    2,
+    "heuristic",
+    "minimal_pnp");
+  auto io_node = std::make_shared<rclcpp::Node>("io_minimal_pnp");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  bool target_received = false;
+  dog_interfaces::msg::Target3D received_msg;
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+    target_topic,
+    rclcpp::SensorDataQoS(),
+    [&target_received, &received_msg](const dog_interfaces::msg::Target3D::ConstSharedPtr message) {
+      target_received = true;
+      received_msg = *message;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makeImage(stamp));
+  cloud_pub->publish(makePointCloudWithXyz(stamp, {
+      {1.0F, 2.0F, 3.0F},
+      {2.0F, 3.0F, 4.0F},
+      {3.0F, 4.0F, 5.0F}}));
+
+  spinFor(executor, std::chrono::milliseconds(250));
+
+  ASSERT_TRUE(target_received);
+  EXPECT_EQ(received_msg.target_id, "synced_target");
+  EXPECT_EQ(received_msg.header.frame_id, "base_link");
+  EXPECT_TRUE(std::isfinite(received_msg.position.x));
+  EXPECT_TRUE(std::isfinite(received_msg.position.y));
+  EXPECT_TRUE(std::isfinite(received_msg.position.z));
+  EXPECT_NEAR(received_msg.position.x, 2.0, 1e-4);
+  EXPECT_NEAR(received_msg.position.y, 3.0, 1e-4);
+  EXPECT_NEAR(received_msg.position.z, 4.0, 1e-4);
+  EXPECT_GE(perception_node->getSolvedFrameCount(), 1U);
+  EXPECT_LT(perception_node->getEndToEndLatencyP95Ms(), 50.0);
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)target_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsPointCloudWithoutXyzFields)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/minimal_pnp_missing_xyz";
+  const std::string cloud_topic = "/test/cloud/minimal_pnp_missing_xyz";
+  const std::string target_topic = "/test/target/minimal_pnp_missing_xyz";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    "/test/digit/minimal_pnp_missing_xyz",
+    8,
+    "best_effort",
+    50,
+    150,
+    "/test/lifecycle/system_mode/minimal_pnp_missing_xyz",
+    2,
+    "heuristic",
+    "minimal_pnp");
+  auto io_node = std::make_shared<rclcpp::Node>("io_minimal_pnp_missing_xyz");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  bool target_received = false;
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+    target_topic,
+    rclcpp::SensorDataQoS(),
+    [&target_received](const dog_interfaces::msg::Target3D::ConstSharedPtr) { target_received = true; });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makeImage(stamp));
+  cloud_pub->publish(makePointCloud(stamp));
+
+  spinFor(executor, std::chrono::milliseconds(250));
+
+  EXPECT_FALSE(target_received);
+  EXPECT_EQ(perception_node->getSolvedFrameCount(), 0U);
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)target_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsAllNonFinitePoints)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/minimal_pnp_non_finite";
+  const std::string cloud_topic = "/test/cloud/minimal_pnp_non_finite";
+  const std::string target_topic = "/test/target/minimal_pnp_non_finite";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    "/test/digit/minimal_pnp_non_finite",
+    8,
+    "best_effort",
+    50,
+    150,
+    "/test/lifecycle/system_mode/minimal_pnp_non_finite",
+    2,
+    "heuristic",
+    "minimal_pnp");
+  auto io_node = std::make_shared<rclcpp::Node>("io_minimal_pnp_non_finite");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  bool target_received = false;
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3D>(
+    target_topic,
+    rclcpp::SensorDataQoS(),
+    [&target_received](const dog_interfaces::msg::Target3D::ConstSharedPtr) { target_received = true; });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makeImage(stamp));
+  cloud_pub->publish(makePointCloudWithXyz(stamp, {
+      {std::numeric_limits<float>::quiet_NaN(), 1.0F, 2.0F},
+      {1.0F, std::numeric_limits<float>::infinity(), 2.0F},
+      {1.0F, 2.0F, -std::numeric_limits<float>::infinity()}}));
+
+  spinFor(executor, std::chrono::milliseconds(250));
+
+  EXPECT_FALSE(target_received);
+  EXPECT_EQ(perception_node->getSolvedFrameCount(), 0U);
 
   executor.remove_node(io_node);
   executor.remove_node(perception_node);
