@@ -501,17 +501,6 @@ void LifecycleNode::estopCallback(const std_msgs::msg::String::ConstSharedPtr ms
     return;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(breaker_mutex_);
-    if (controlled_degrade_mode_) {
-      RCLCPP_WARN(
-        get_logger(),
-        "ignore estop mode switch while controlled degrade is active, payload=%s",
-        msg->data.c_str());
-      return;
-    }
-  }
-
   const auto estop_active = parseEstopActive(msg->data);
   if (!estop_active.has_value()) {
     RCLCPP_WARN(
@@ -784,6 +773,8 @@ void LifecycleNode::validFrameCallback(const dog_interfaces::msg::Target3D::Cons
       }
       recovery_latency_ms = (now_time - last_reconnect_start_time_).nanoseconds() / 1000000;
       last_reconnect_recovery_latency_ms_ = recovery_latency_ms;
+      has_last_reconnect_recovery_time_ = true;
+      last_reconnect_recovery_time_ = now_time;
       reconnect_pending_ = false;
       reconnect_valid_frame_consecutive_ = 0U;
       recovered_from_reconnect = true;
@@ -887,6 +878,12 @@ void LifecycleNode::heartbeatTimerCallback()
 
     since_last_valid_frame_ms = (now_time - last_valid_frame_time_).nanoseconds() / 1000000;
     if (since_last_valid_frame_ms <= heartbeat_timeout_ms_) {
+      return;
+    }
+
+    // Keep a single reconnect attempt in flight to avoid attempt inflation while
+    // waiting for transition acks or valid-frame latch completion.
+    if (reconnect_pending_) {
       return;
     }
 
@@ -1137,10 +1134,14 @@ void LifecycleNode::publishHealthAlarm(
   int64_t since_last_valid_frame_ms)
 {
   int64_t last_valid_frame_unix_ms = -1;
+  int64_t last_reconnect_success_unix_ms = -1;
   {
     std::lock_guard<std::mutex> lock(breaker_mutex_);
     if (has_last_valid_frame_time_) {
       last_valid_frame_unix_ms = last_valid_frame_time_.nanoseconds() / 1000000;
+    }
+    if (has_last_reconnect_recovery_time_) {
+      last_reconnect_success_unix_ms = last_reconnect_recovery_time_.nanoseconds() / 1000000;
     }
   }
 
@@ -1152,6 +1153,7 @@ void LifecycleNode::publishHealthAlarm(
     ";attempts=" + std::to_string(attempts) +
     ";max_attempts=" + std::to_string(max_restart_attempts_) +
     ";restart_window_ms=" + std::to_string(restart_window_ms_) +
+    ";last_reconnect_success_unix_ms=" + std::to_string(last_reconnect_success_unix_ms) +
     ";last_valid_frame_unix_ms=" + std::to_string(last_valid_frame_unix_ms) +
     ";since_last_valid_frame_ms=" + std::to_string(since_last_valid_frame_ms);
 

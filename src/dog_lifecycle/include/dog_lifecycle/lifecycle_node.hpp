@@ -154,6 +154,8 @@ private:
   uint32_t reconnect_transition_attempt_{0U};
   bool has_last_transition_verified_time_{false};
   rclcpp::Time last_transition_verified_time_;
+  bool has_last_reconnect_recovery_time_{false};
+  rclcpp::Time last_reconnect_recovery_time_;
   bool controlled_degrade_mode_{false};
   std::deque<rclcpp::Time> restart_attempt_timestamps_;
 

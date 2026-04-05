@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-02
-last_updated: 2026-04-04
+last_updated: 2026-04-05
 project: Dog
 project_key: NOKEY
 tracking_system: file-system
@@ -62,5 +62,5 @@ development_status:
   epic-5: in-progress
   5-1-yaml-断电进度恢复读取与重启重建: done
   5-2-单侧丢帧先验外推补偿与急停空转: done
-  5-3-节点假死心跳健康守护重联: review
+  5-3-节点假死心跳健康守护重联: in-progress
   epic-5-retrospective: optional

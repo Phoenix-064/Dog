@@ -511,8 +511,148 @@ TEST_F(LifecycleNodeTest, RestartLimitTriggersControlledDegradeAndAlarm)
   }));
 
   EXPECT_NE(alarm_payload.find("type=heartbeat_restart_limit"), std::string::npos);
+  EXPECT_NE(alarm_payload.find("last_reconnect_success_unix_ms="), std::string::npos);
   EXPECT_NE(mode_payload.find("mode=degraded"), std::string::npos);
   EXPECT_FALSE(lifecycle_node->IsReconnectPendingForTest());
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)alarm_sub;
+  (void)mode_sub;
+  (void)transition_sub;
+}
+
+TEST_F(LifecycleNodeTest, ReconnectPendingDoesNotAccumulateRestartAttempts)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_pending_gate";
+  const std::string transition_topic = "/test/lifecycle/transition_pending_gate";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 40);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 20);
+  options.append_parameter_override("max_restart_attempts", 3);
+  options.append_parameter_override("restart_window_ms", 500);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_pending_gate_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+
+  std::vector<std::string> transitions;
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&transitions](const std_msgs::msg::String::ConstSharedPtr msg) {
+      transitions.push_back(msg->data);
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
+    return lifecycle_node->IsReconnectPendingForTest();
+  }));
+
+  spinFor(executor, std::chrono::milliseconds(200));
+
+  EXPECT_EQ(lifecycle_node->GetRestartAttemptsInWindowForTest(), 1U);
+  EXPECT_EQ(transitions.size(), 2U);
+  EXPECT_TRUE(lifecycle_node->IsReconnectPendingForTest());
+
+  executor.remove_node(io_node);
+  executor.remove_node(lifecycle_node);
+  (void)transition_sub;
+}
+
+TEST_F(LifecycleNodeTest, EstopStillWorksDuringControlledDegrade)
+{
+  const std::string valid_frame_topic = "/test/lifecycle/valid_frame_degrade_estop";
+  const std::string transition_topic = "/test/lifecycle/transition_degrade_estop";
+  const std::string alarm_topic = "/test/lifecycle/alarm_degrade_estop";
+  const std::string system_mode_topic = "/test/lifecycle/system_mode_degrade_estop";
+  const std::string estop_topic = "/test/lifecycle/estop_degrade_estop";
+
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("valid_frame_topic", valid_frame_topic);
+  options.append_parameter_override("lifecycle_transition_topic", transition_topic);
+  options.append_parameter_override("health_alarm_topic", alarm_topic);
+  options.append_parameter_override("system_mode_topic", system_mode_topic);
+  options.append_parameter_override("estop_topic", estop_topic);
+  options.append_parameter_override("heartbeat_timeout_ms", 40);
+  options.append_parameter_override("heartbeat_check_period_ms", 10);
+  options.append_parameter_override("reconnect_min_interval_ms", 20);
+  options.append_parameter_override("max_restart_attempts", 1);
+  options.append_parameter_override("restart_window_ms", 300);
+
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>(options);
+  auto io_node = std::make_shared<rclcpp::Node>("lifecycle_heartbeat_degrade_estop_io");
+  auto valid_frame_pub = io_node->create_publisher<dog_interfaces::msg::Target3D>(
+    valid_frame_topic,
+    rclcpp::SensorDataQoS());
+  auto estop_pub = io_node->create_publisher<std_msgs::msg::String>(
+    estop_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  std::string alarm_payload;
+  auto alarm_sub = io_node->create_subscription<std_msgs::msg::String>(
+    alarm_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&alarm_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
+      alarm_payload = msg->data;
+    });
+
+  std::string mode_payload;
+  auto mode_sub = io_node->create_subscription<std_msgs::msg::String>(
+    system_mode_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&mode_payload](const std_msgs::msg::String::ConstSharedPtr msg) {
+      mode_payload = msg->data;
+    });
+
+  auto transition_sub = io_node->create_subscription<std_msgs::msg::String>(
+    transition_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [](const std_msgs::msg::String::ConstSharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node);
+  executor.add_node(io_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
+    return io_node->count_subscribers(valid_frame_topic) > 0u &&
+           io_node->count_subscribers(estop_topic) > 0u;
+  }));
+
+  auto valid_frame = makeValidFrame(io_node);
+  valid_frame_pub->publish(valid_frame);
+  spinFor(executor, std::chrono::milliseconds(20));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1200), [&]() {
+    return lifecycle_node->IsControlledDegradeModeForTest() && !alarm_payload.empty();
+  }));
+
+  std_msgs::msg::String estop_on;
+  estop_on.data = "active=true";
+  estop_pub->publish(estop_on);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
+    return lifecycle_node->IsIdleSpinningForTest();
+  }));
+
+  EXPECT_NE(mode_payload.find("mode=idle_spinning"), std::string::npos);
 
   executor.remove_node(io_node);
   executor.remove_node(lifecycle_node);

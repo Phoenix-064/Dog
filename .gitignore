@@ -62,3 +62,8 @@ test_detail.xml
 # Runtime TF graph artifacts
 frames_*.gv
 frames_*.pdf
+
+# logs
+*.log
+!_bmad-output/implementation-artifacts/1-3-memory-soak-30m.log
+!_bmad-output/implementation-artifacts/1-3-perception-runtime-30m.log

@@ -17,3 +17,7 @@
 ## Deferred from: code review of 4-1-感知算法动态工厂与热插拔注入 (2026-04-04)
 
 - NFR-9“新增检测器改动面 < 2 文件”仍缺少可复验证据：当前提交已包含多处基础改造，需在后续“新增第三个检测器”演练中补充最小改动与构建日志证明。
+
+## Deferred from: code review of 5-3-节点假死心跳健康守护重联 (2026-04-05)
+
+- `parseKeyValuePayload` 边界循环使用 `start <= payload.size()`（`src/dog_lifecycle/src/lifecycle_node.cpp:1229`）属于既有实现细节问题，本次心跳重联提交未引入，后续可在解析器统一治理时处理。
