@@ -35,6 +35,7 @@ file(GLOB DOG_PERCEPTION_DETECTOR_SOURCES CONFIGURE_DEPENDS
 add_library(${PROJECT_NAME}_lib SHARED
   src/perception_node.cpp
   src/camera_publisher_node.cpp
+  src/box_detector_node.cpp
   src/digit_recognizer_factory.cpp
   ${DOG_PERCEPTION_DETECTOR_SOURCES}
   src/target_3d_solver_factory.cpp
@@ -62,6 +63,7 @@ target_link_libraries(
   Boost::boost
   ${OpenCV_LIBS}
 )
+target_compile_definitions(${PROJECT_NAME}_lib PRIVATE DOG_WORKSPACE_ROOT="${CMAKE_SOURCE_DIR}")
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
@@ -69,10 +71,14 @@ target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
 add_executable(${PROJECT_NAME}_camera_node src/camera_main.cpp)
 target_link_libraries(${PROJECT_NAME}_camera_node ${PROJECT_NAME}_lib)
 
+add_executable(${PROJECT_NAME}_box_detector_node src/box_detector_node_main.cpp)
+target_link_libraries(${PROJECT_NAME}_box_detector_node ${PROJECT_NAME}_lib)
+
 install(TARGETS
   ${PROJECT_NAME}_lib
   ${PROJECT_NAME}_node
   ${PROJECT_NAME}_camera_node
+  ${PROJECT_NAME}_box_detector_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -105,6 +111,12 @@ if(BUILD_TESTING)
   if(TARGET test_camera_publisher_node)
     target_link_libraries(test_camera_publisher_node ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_camera_publisher_node rclcpp sensor_msgs)
+  endif()
+
+  ament_add_gtest(test_box_detector_node test/test_box_detector_node.cpp)
+  if(TARGET test_box_detector_node)
+    target_link_libraries(test_box_detector_node ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_box_detector_node rclcpp sensor_msgs)
   endif()
 endif()
 

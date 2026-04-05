@@ -1,0 +1,9 @@
+dog_box_detector:
+  ros__parameters:
+    image_topic: "/camera/image_raw"
+    box_result_topic: "/target/box_result"
+    box_yolo_model_path: "boxes_detector.pt"
+    box_confidence_threshold: 0.35
+    box_nms_threshold: 0.45
+    box_max_detections: 8
+    box_class_names: ["type_0", "type_1", "type_2", "type_3"]
