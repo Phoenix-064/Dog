@@ -212,6 +212,41 @@ bool waitUntil(
   return condition();
 }
 
+class MultiResultRecognizer final : public dog_perception::IDigitRecognizer
+{
+public:
+  dog_perception::DigitRecognitionResultArrary infer(const dog_perception::ImageView & view) override
+  {
+    if (!view.image) {
+      return {};
+    }
+
+    geometry_msgs::msg::Point pos_a;
+    pos_a.x = 12.0;
+    pos_a.y = 18.0;
+    pos_a.z = 0.0;
+
+    geometry_msgs::msg::Point pos_b;
+    pos_b.x = 20.0;
+    pos_b.y = 26.0;
+    pos_b.z = 0.0;
+
+    return dog_perception::DigitRecognitionResultArrary{
+      dog_perception::DigitRecognitionResult{true, 2, 0.93F, pos_a, "ok"},
+      dog_perception::DigitRecognitionResult{true, 7, 0.86F, pos_b, "ok"}};
+  }
+};
+
+bool ensureMultiResultRecognizerRegistered()
+{
+  static const bool registered = dog_perception::registerDigitRecognizer(
+    "test_multi_result",
+    [](const dog_perception::DigitRecognizerParams &, const rclcpp::Logger &) {
+      return std::make_unique<MultiResultRecognizer>();
+    });
+  return registered;
+}
+
 }  // namespace
 
 class PerceptionNodeTest : public ::testing::Test
@@ -647,14 +682,12 @@ TEST_F(PerceptionNodeTest, DigitRecognitionPublishesSemanticResult)
   auto cloud_pub =
     io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
 
-  std::string received_target_id;
+  std::vector<dog_interfaces::msg::Target3D> received_targets;
   auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
     digit_topic,
     rclcpp::SensorDataQoS(),
-    [&received_target_id](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
-      if (!message->targets.empty()) {
-        received_target_id = message->targets.front().target_id;
-      }
+    [&received_targets](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      received_targets = message->targets;
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -672,10 +705,73 @@ TEST_F(PerceptionNodeTest, DigitRecognitionPublishesSemanticResult)
   cloud_pub->publish(makePointCloud(stamp2));
   spinFor(executor, std::chrono::milliseconds(200));
 
-  EXPECT_NE(received_target_id, "");
-  EXPECT_NE(received_target_id, "no_feature");
+  ASSERT_FALSE(received_targets.empty());
+  EXPECT_NE(received_targets.front().target_id, "no_feature");
+  EXPECT_GE(received_targets.front().position.x, 0.0);
+  EXPECT_GE(received_targets.front().position.y, 0.0);
   EXPECT_GE(perception_node->getDigitLatencySampleCount(), 1U);
   EXPECT_LT(perception_node->getDigitLatencyP95Ms(), 50.0);
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)digit_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, DigitRecognitionAcceptsMultipleInferenceResults)
+{
+  ASSERT_TRUE(ensureMultiResultRecognizerRegistered());
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/digit_multi";
+  const std::string cloud_topic = "/test/cloud/digit_multi";
+  const std::string target_topic = "/test/target/digit_multi";
+  const std::string digit_topic = "/test/digit/digit_multi";
+
+  auto perception_node = createPerceptionNode(
+    yaml_path,
+    image_topic,
+    cloud_topic,
+    target_topic,
+    digit_topic,
+    8,
+    "best_effort",
+    50,
+    150,
+    "/test/lifecycle/system_mode/digit_multi",
+    1,
+    "test_multi_result");
+  auto io_node = std::make_shared<rclcpp::Node>("io_digit_multi");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  std::vector<dog_interfaces::msg::Target3D> received_targets;
+  auto digit_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
+    digit_topic,
+    rclcpp::SensorDataQoS(),
+    [&received_targets](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      received_targets = message->targets;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makePatternImage(stamp));
+  cloud_pub->publish(makePointCloud(stamp));
+  spinFor(executor, std::chrono::milliseconds(200));
+
+  ASSERT_GE(received_targets.size(), 2U);
+  EXPECT_EQ(received_targets[0].target_id, "digit_2");
+  EXPECT_EQ(received_targets[1].target_id, "digit_7");
+  EXPECT_DOUBLE_EQ(received_targets[0].position.x, 12.0);
+  EXPECT_DOUBLE_EQ(received_targets[0].position.y, 18.0);
+  EXPECT_DOUBLE_EQ(received_targets[1].position.x, 20.0);
+  EXPECT_DOUBLE_EQ(received_targets[1].position.y, 26.0);
 
   executor.remove_node(io_node);
   executor.remove_node(perception_node);

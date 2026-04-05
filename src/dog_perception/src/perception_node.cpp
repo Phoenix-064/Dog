@@ -831,10 +831,12 @@ void PerceptionNode::processDigitRecognition(
   const sensor_msgs::msg::Image::ConstSharedPtr & image_msg)
 {
   const auto begin = now();
+  constexpr float kHighConfidenceThreshold = 0.8F;
 
-  DigitRecognitionResult result;
+  DigitRecognitionResultArrary results;
+  std::string reason = "ok";
   try {
-    result = digit_recognizer_->infer(ImageView{image_msg});
+    results = digit_recognizer_->infer(ImageView{image_msg});
   } catch (const std::exception & exception) {
     RCLCPP_WARN_THROTTLE(
       get_logger(),
@@ -842,30 +844,44 @@ void PerceptionNode::processDigitRecognition(
       1000,
       "Digit recognizer exception: %s",
       exception.what());
-    result = DigitRecognitionResult{false, -1, 0.0F, "recognizer_exception"};
+    reason = "recognizer_exception";
+    results.clear();
   }
 
-  digit_label_history_.push_back(result.has_feature ? result.label : -1);
+  results.erase(
+    std::remove_if(
+      results.begin(),
+      results.end(),
+      [](const DigitRecognitionResult & item) {
+        return !item.has_feature || item.confidence < kHighConfidenceThreshold;
+      }),
+    results.end());
 
-  if (result.has_feature) {
+  const int top_label = (!results.empty() && results.front().has_feature) ? results.front().label : -1;
+  digit_label_history_.push_back(top_label);
+
+  if (top_label >= 0) {
     int confirmed_count = 0;
     for (const int label : digit_label_history_) {
-      if (label == result.label) {
+      if (label == top_label) {
         ++confirmed_count;
       }
     }
 
     if (confirmed_count < digit_temporal_confirm_count_) {
-      result.has_feature = false;
-      result.reason = "temporal_unconfirmed";
+      results.clear();
+      reason = "temporal_unconfirmed";
     }
   }
 
-  auto message = toDigitTarget3D(image_msg, camera_extrinsics_.frame_id, result);
-  dog_interfaces::msg::Target3DArray message_array;
-  message_array.header = message.header;
-  message_array.targets.push_back(message);
-  digit_result_pub_->publish(std::move(message_array));
+  if (!results.empty()) {
+    reason = results.front().reason;
+  } else if (reason == "ok") {
+    reason = "no_detection";
+  }
+
+  auto message_array = toDigitTarget3D(image_msg, camera_extrinsics_.frame_id, results);
+  const auto & published_target = message_array.targets.front();
 
   const auto end = now();
   const double elapsed_ms = static_cast<double>((end - begin).nanoseconds()) / 1e6;
@@ -878,14 +894,17 @@ void PerceptionNode::processDigitRecognition(
     get_logger(),
     *get_clock(),
     1000,
-    "Digit result stamp=%u.%u, infer_ms=%.3f, confidence=%.3f, output=%s, reason=%s, input_age_ms=%.3f",
-    message.header.stamp.sec,
-    message.header.stamp.nanosec,
+    "Digit result stamp=%u.%u, infer_ms=%.3f, targets=%zu, confidence=%.3f, output=%s, reason=%s, input_age_ms=%.3f",
+    message_array.header.stamp.sec,
+    message_array.header.stamp.nanosec,
     elapsed_ms,
-    result.confidence,
-    message.target_id.c_str(),
-    result.reason.c_str(),
+    message_array.targets.size(),
+    published_target.confidence,
+    published_target.target_id.c_str(),
+    reason.c_str(),
     input_age_ms);
+
+  digit_result_pub_->publish(std::move(message_array));
 }
 
 size_t PerceptionNode::getFrameCacheSize() const

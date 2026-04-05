@@ -1,9 +1,12 @@
 #pragma once
 
 #include <dog_interfaces/msg/target3_d.hpp>
+#include <dog_interfaces/msg/target3_d_array.hpp>
+#include <geometry_msgs/msg/point.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
+#include <vector>
 #include <memory>
 #include <string>
 #include <functional>
@@ -33,8 +36,12 @@ struct DigitRecognitionResult
   bool has_feature;
   int label;
   float confidence;
+  // Pixel-space center in the input image ROI; z is reserved as 0.0.
+  geometry_msgs::msg::Point position;
   std::string reason;
 };
+
+using DigitRecognitionResultArrary = std::vector<DigitRecognitionResult>;
 
 class IDigitRecognizer
 {
@@ -44,8 +51,8 @@ public:
 
   /// @brief 在给定图像视图上执行数字推理。
   /// @param view 输入图像视图。
-  /// @return 数字识别结果。
-  virtual DigitRecognitionResult infer(const ImageView & view) = 0;
+  /// @return 数字识别结果数组。
+  virtual DigitRecognitionResultArrary infer(const ImageView & view) = 0;
 };
 
 using DigitRecognizerCreator = std::function<std::unique_ptr<IDigitRecognizer>(
@@ -83,14 +90,14 @@ public:
     const rclcpp::Logger & logger);
 };
 
-/// @brief 将数字识别结果转换为 Target3D 消息形式。
+/// @brief 将数字识别结果数组转换为 Target3DArray 消息形式。
 /// @param image_msg 源图像消息。
 /// @param output_frame_id 输出坐标系 id。
-/// @param result 数字识别结果。
-/// @return 用于发布的 Target3D 表示。
-dog_interfaces::msg::Target3D toDigitTarget3D(
+/// @param results 数字识别结果数组。
+/// @return 用于发布的 Target3DArray 表示。
+dog_interfaces::msg::Target3DArray toDigitTarget3D(
   const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
   const std::string & output_frame_id,
-  const DigitRecognitionResult & result);
+  const DigitRecognitionResultArrary & results);
 
 }  // namespace dog_perception

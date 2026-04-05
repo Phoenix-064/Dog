@@ -33,28 +33,29 @@ public:
 
   /// @brief 对单帧图像执行数字识别。
   /// @param view 输入图像视图。
-  /// @return 识别结果（是否成功、标签、置信度与状态码）。
-  DigitRecognitionResult infer(const ImageView & view) override
+  /// @return 识别结果数组（高置信候选集合）。
+  DigitRecognitionResultArrary infer(const ImageView & view) override
   {
+    constexpr float kHighConfidenceThreshold = 0.8F;
     // 输入空指针保护。
     if (!view.image) {
-      return DigitRecognitionResult{false, -1, 0.0F, "null_image"};
+      return {};
     }
 
     const auto & image = *view.image;
     // 基本图像有效性校验。
     if (image.width == 0U || image.height == 0U || image.data.empty()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_image"};
+      return {};
     }
 
     // 懒加载模型，首次失败后将不再重复尝试。
     if (!ensureModelLoaded()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "model_unavailable"};
+      return {};
     }
 
     cv::Mat frame = toCvMat(image);
     if (frame.empty()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "unsupported_encoding_or_layout"};
+      return {};
     }
 
     const int image_width = frame.cols;
@@ -67,7 +68,7 @@ public:
     // ROI 统一限制在图像边界内，避免越界访问。
     const cv::Rect roi(roi_x, roi_y, roi_w, roi_h);
     if (roi.empty()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "empty_roi"};
+      return {};
     }
 
     cv::Mat roi_image = frame(roi).clone();
@@ -92,21 +93,19 @@ public:
       net_.forward(outputs, net_.getUnconnectedOutLayersNames());
 
       if (outputs.empty()) {
-        return DigitRecognitionResult{false, -1, 0.0F, "empty_output"};
+        return {};
       }
 
-      int best_label = -1;
-      float best_score = 0.0F;
-      parseOutputs(outputs, best_label, best_score);
-
-      if (best_label < 0 || best_score < static_cast<float>(params_.min_confidence)) {
-        return DigitRecognitionResult{false, -1, best_score, "no_detection"};
-      }
-
-      return DigitRecognitionResult{true, best_label % 10, best_score, "ok"};
+      DigitRecognitionResultArrary results;
+      parseOutputs(
+        outputs,
+        roi,
+        static_cast<float>(std::max(params_.min_confidence, static_cast<double>(kHighConfidenceThreshold))),
+        results);
+      return results;
     } catch (const cv::Exception & exception) {
       RCLCPP_ERROR(logger_, "OpenCV DNN infer failed: %s", exception.what());
-      return DigitRecognitionResult{false, -1, 0.0F, "dnn_infer_failed"};
+      return {};
     }
   }
 
@@ -179,12 +178,33 @@ private:
     }
   }
 
-  /// @brief 解析 YOLO 输出并更新当前最佳类别与置信度。
+  /// @brief 将候选中心点映射到完整图像坐标系。
+  static geometry_msgs::msg::Point mapCenterPoint(
+    const cv::Rect & roi,
+    const float center_x,
+    const float center_y)
+  {
+    geometry_msgs::msg::Point point;
+    point.x = (center_x >= 0.0F && center_x <= 1.0F) ?
+      static_cast<double>(roi.x) + static_cast<double>(center_x) * static_cast<double>(roi.width) :
+      static_cast<double>(roi.x) + static_cast<double>(center_x);
+    point.y = (center_y >= 0.0F && center_y <= 1.0F) ?
+      static_cast<double>(roi.y) + static_cast<double>(center_y) * static_cast<double>(roi.height) :
+      static_cast<double>(roi.y) + static_cast<double>(center_y);
+    point.z = 0.0;
+    return point;
+  }
+
+  /// @brief 解析 YOLO 输出并收集高置信候选。
   ///
   /// 兼容两类常见输出格式：
   /// 1) [x, y, w, h, obj, cls1, cls2, ...]；
   /// 2) [x, y, w, h, score, label]。
-  static void parseOutputs(const std::vector<cv::Mat> & outputs, int & best_label, float & best_score)
+  static void parseOutputs(
+    const std::vector<cv::Mat> & outputs,
+    const cv::Rect & roi,
+    const float confidence_threshold,
+    DigitRecognitionResultArrary & results)
   {
     for (const auto & output : outputs) {
       cv::Mat rows_view;
@@ -218,14 +238,24 @@ private:
           score = objectness * (*best_class_it);
           label = static_cast<int>(best_class_it - class_begin);
         } else {
+          if (rows_view.cols != 6) {
+            continue;
+          }
           score = data[4];
           label = static_cast<int>(data[5]);
         }
 
-        if (std::isfinite(score) && score > best_score) {
-          best_score = score;
-          best_label = label;
+        if (!std::isfinite(score) || label < 0) {
+          continue;
         }
+
+        if (score < confidence_threshold) {
+          continue;
+        }
+
+        const geometry_msgs::msg::Point point = mapCenterPoint(roi, data[0], data[1]);
+        results.push_back(
+          DigitRecognitionResult{true, label % 10, score, point, "ok"});
       }
     }
   }

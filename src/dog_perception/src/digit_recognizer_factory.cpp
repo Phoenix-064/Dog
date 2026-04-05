@@ -119,19 +119,39 @@ std::unique_ptr<IDigitRecognizer> DigitRecognizerFactory::create(
   return recognizer;
 }
 
-dog_interfaces::msg::Target3D toDigitTarget3D(
+dog_interfaces::msg::Target3DArray toDigitTarget3D(
   const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
   const std::string & output_frame_id,
-  const DigitRecognitionResult & result)
+  const DigitRecognitionResultArrary & results)
 {
-  dog_interfaces::msg::Target3D message;
+  dog_interfaces::msg::Target3DArray message_array;
   if (image_msg) {
-    message.header.stamp = image_msg->header.stamp;
+    message_array.header.stamp = image_msg->header.stamp;
   }
-  message.header.frame_id = output_frame_id;
-  message.target_id = result.has_feature ? ("digit_" + std::to_string(result.label)) : "no_feature";
-  message.confidence = result.confidence;
-  return message;
+  message_array.header.frame_id = output_frame_id;
+
+  for (const auto & result : results) {
+    if (!result.has_feature) {
+      continue;
+    }
+
+    dog_interfaces::msg::Target3D message;
+    message.header = message_array.header;
+    message.target_id = "digit_" + std::to_string(result.label);
+    message.position = result.position;
+    message.confidence = result.confidence;
+    message_array.targets.push_back(std::move(message));
+  }
+
+  if (message_array.targets.empty()) {
+    dog_interfaces::msg::Target3D no_feature;
+    no_feature.header = message_array.header;
+    no_feature.target_id = "no_feature";
+    no_feature.confidence = 0.0F;
+    message_array.targets.push_back(std::move(no_feature));
+  }
+
+  return message_array;
 }
 
 }  // namespace dog_perception

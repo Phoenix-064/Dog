@@ -22,11 +22,12 @@ public:
 
   /// @brief 对输入图像执行均值强度数字识别。
   /// @param view 输入图像视图。
-  /// @return 数字识别结果。
-  DigitRecognitionResult infer(const ImageView & view) override
+  /// @return 数字识别结果数组。
+  DigitRecognitionResultArrary infer(const ImageView & view) override
   {
+    constexpr float kHighConfidenceThreshold = 0.8F;
     if (!view.image || view.image->width == 0U || view.image->height == 0U || view.image->data.empty()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_image"};
+      return {};
     }
 
     const auto & image = *view.image;
@@ -38,17 +39,17 @@ public:
     const int roi_h = std::max(1, std::min(params_.roi_height, image_height - roi_y));
 
     if (image.step < image.width || (image.step % image.width) != 0U) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_step"};
+      return {};
     }
 
     const size_t expected_size = static_cast<size_t>(image.step) * static_cast<size_t>(image.height);
     if (expected_size > image.data.size()) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_layout"};
+      return {};
     }
 
     const uint32_t channels = image.step / image.width;
     if (channels == 0U) {
-      return DigitRecognitionResult{false, -1, 0.0F, "invalid_step"};
+      return {};
     }
 
     double sum = 0.0;
@@ -58,7 +59,7 @@ public:
       for (int x = roi_x; x < roi_x + roi_w; ++x) {
         const size_t index = row_base + static_cast<size_t>(x) * channels;
         if (index >= image.data.size()) {
-          return DigitRecognitionResult{false, -1, 0.0F, "out_of_range"};
+          return {};
         }
         sum += static_cast<double>(image.data[index]);
         ++count;
@@ -66,17 +67,24 @@ public:
     }
 
     if (count == 0U) {
-      return DigitRecognitionResult{false, -1, 0.0F, "empty_roi"};
+      return {};
     }
 
     const double mean = sum / static_cast<double>(count);
     const float confidence = static_cast<float>(std::clamp(mean / 255.0, 0.0, 1.0));
-    if (confidence < params_.min_confidence) {
-      return DigitRecognitionResult{false, -1, confidence, "low_confidence"};
+    const float confidence_threshold =
+      static_cast<float>(std::max(params_.min_confidence, static_cast<double>(kHighConfidenceThreshold)));
+    if (confidence < confidence_threshold) {
+      return {};
     }
 
     const int label = static_cast<int>(mean) % 10;
-    return DigitRecognitionResult{true, label, confidence, "ok"};
+    geometry_msgs::msg::Point center;
+    center.x = static_cast<double>(roi_x + roi_w / 2);
+    center.y = static_cast<double>(roi_y + roi_h / 2);
+    center.z = 0.0;
+
+    return DigitRecognitionResultArrary{DigitRecognitionResult{true, label, confidence, center, "ok"}};
   }
 
 private:
