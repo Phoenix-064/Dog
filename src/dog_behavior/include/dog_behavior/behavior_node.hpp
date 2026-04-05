@@ -17,12 +17,25 @@ namespace dog_behavior
 class BehaviorNode : public rclcpp::Node
 {
 public:
+  /// @brief Construct a behavior node with default options.
   BehaviorNode();
+  /// @brief Construct a behavior node with explicit ROS node options.
+  /// @param options ROS node options used for node initialization.
   explicit BehaviorNode(const rclcpp::NodeOptions & options);
 
+  /// @brief Trigger an ExecuteBehavior action goal using the latest cached pose.
+  /// @param behavior_name Behavior identifier forwarded to the action server.
+  /// @return True when the goal request is accepted for sending.
   bool triggerExecuteBehavior(const std::string & behavior_name);
+  /// @brief Get the current execution state as a string token.
+  /// @return Lowercase execution state text.
   std::string getExecutionState() const;
+  /// @brief Test helper that checks whether a task phase is blocked after recovery.
+  /// @param task_phase Task phase token to query.
+  /// @return True if the recovered completed phase is tracked.
   bool IsTaskPhaseRecoveredForTest(const std::string & task_phase) const;
+  /// @brief Test helper that reports whether idle-spinning mode is active.
+  /// @return True when behavior execution is gated by idle-spinning mode.
   bool IsIdleSpinningForTest() const;
 
 private:
@@ -42,23 +55,61 @@ private:
     kTimeout,
   };
 
+  /// @brief Convert odometry updates to global pose publications and cache latest pose.
+  /// @param msg Incoming odometry message.
   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
+  /// @brief Handle behavior trigger messages and forward them to action dispatch.
+  /// @param msg Incoming trigger payload.
   void executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Update recovery-derived execution filters.
+  /// @param msg Recovery context payload.
   void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief React to lifecycle system mode transitions.
+  /// @param msg System mode payload.
   void systemModeCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Periodically probe action server readiness.
   void actionServerWaitTimerCallback();
+  /// @brief Cancel active goals when action feedback is stale beyond timeout.
   void feedbackWatchdogTimerCallback();
+  /// @brief Handle action goal acceptance or rejection responses.
+  /// @param goal_handle Goal handle returned by the action client.
   void goalResponseCallback(ExecuteBehaviorGoalHandle::SharedPtr goal_handle);
+  /// @brief Track action feedback to refresh watchdog timestamps.
+  /// @param goal_handle Goal handle associated with feedback.
+  /// @param feedback Action feedback payload.
   void feedbackCallback(
     ExecuteBehaviorGoalHandle::SharedPtr goal_handle,
     const std::shared_ptr<const ExecuteBehavior::Feedback> feedback);
+  /// @brief Handle terminal action result and update execution state.
+  /// @param result Wrapped action result.
   void resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result);
+  /// @brief Check whether current internal state allows sending a new goal.
+  /// @return True when action server is ready and no goal is in-flight.
   bool canSendGoalLocked() const;
+  /// @brief Convert internal execution state enum to stable text representation.
+  /// @param state Execution state enum value.
+  /// @return Lowercase state token.
   std::string executionStateToString(ExecutionState state) const;
+  /// @brief Normalize free-form tokens by lowercasing and removing spaces.
+  /// @param value Raw token text.
+  /// @return Normalized token.
   static std::string normalizeToken(const std::string & value);
+  /// @brief Parse key-value payload text and decode percent-encoded values.
+  /// @param payload Input payload using semicolon-separated key-value pairs.
+  /// @param key Target key to extract.
+  /// @return Decoded value for the key, or empty string when missing.
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
+  /// @brief Determine whether a target state represents completion.
+  /// @param target_state State token.
+  /// @return True for completed terminal states.
   bool isCompletedState(const std::string & target_state) const;
+  /// @brief Validate that all pose components are finite.
+  /// @param pose Pose to validate.
+  /// @return True when no NaN/Inf values are present.
   bool isFinitePose(const geometry_msgs::msg::Pose & pose) const;
+  /// @brief Validate quaternion norm against expected unit norm tolerance.
+  /// @param pose Pose whose orientation quaternion is checked.
+  /// @return True when quaternion norm is within accepted bounds.
   bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
 
   std::string default_frame_id_;

@@ -25,21 +25,51 @@ namespace dog_perception
 class PerceptionNode : public rclcpp::Node
 {
 public:
+  /// @brief Construct perception node and initialize synchronized perception pipeline.
+  /// @param options ROS node options.
   explicit PerceptionNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
+  /// @brief Get current cached frame-history size.
+  /// @return Number of cached frame records.
   size_t getFrameCacheSize() const;
+  /// @brief Get number of dropped synchronized frames.
+  /// @return Dropped frame count.
   size_t getDroppedFrameCount() const;
+  /// @brief Get number of successfully solved target frames.
+  /// @return Solved frame count.
   size_t getSolvedFrameCount() const;
+  /// @brief Get number of solver failures.
+  /// @return Solve failure count.
   size_t getSolveFailureCount() const;
+  /// @brief Get number of synchronized-latency samples.
+  /// @return Latency sample count.
   size_t getLatencySampleCount() const;
+  /// @brief Get number of digit-recognition latency samples.
+  /// @return Digit latency sample count.
   size_t getDigitLatencySampleCount() const;
+  /// @brief Get number of extrapolation trigger events.
+  /// @return Extrapolation trigger count.
   size_t getExtrapolationTriggerCount() const;
+  /// @brief Get number of recoveries from extrapolation to synchronized solving.
+  /// @return Extrapolation recovery count.
   size_t getExtrapolationRecoveryCount() const;
+  /// @brief Get number of idle-spinning mode enter events.
+  /// @return Idle-spinning trigger count.
   size_t getIdleSpinningTriggerCount() const;
+  /// @brief Report runtime QoS compatibility state.
+  /// @return True when runtime publishers match configured QoS reliability.
   bool isQosCompatible() const;
+  /// @brief Report whether lifecycle mode is idle-spinning/degraded.
+  /// @return True when node is in idle-spinning mode.
   bool isIdleSpinningMode() const;
+  /// @brief Compute p95 solver execution latency in milliseconds.
+  /// @return P95 latency.
   double getLatencyP95Ms() const;
+  /// @brief Compute p95 end-to-end latency from source timestamp to publish time.
+  /// @return P95 end-to-end latency.
   double getEndToEndLatencyP95Ms() const;
+  /// @brief Compute p95 digit-recognition latency in milliseconds.
+  /// @return P95 digit latency.
   double getDigitLatencyP95Ms() const;
 
 private:
@@ -60,22 +90,57 @@ private:
     double qw;
   };
 
+  /// @brief Resolve default extrinsics YAML path from package share directory.
+  /// @return Default extrinsics YAML absolute path.
   static std::string getDefaultExtrinsicsYamlPath();
+  /// @brief Load and validate camera extrinsics from YAML.
+  /// @param yaml_path Path to extrinsics YAML file.
+  /// @return Parsed camera extrinsics.
   CameraExtrinsics loadExtrinsicsFromYaml(const std::string & yaml_path) const;
+  /// @brief Publish static camera transform after extrinsics are loaded.
   void initializeStaticTransform();
+  /// @brief Configure synchronized image-pointcloud processing pipeline.
   void setupSynchronizedPipeline();
+  /// @brief Process synchronized image-pointcloud pair.
+  /// @param image_msg Synchronized image message.
+  /// @param pointcloud_msg Synchronized pointcloud message.
   void synchronizedCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
+  /// @brief Track latest image timestamp and receive time.
+  /// @param image_msg Incoming image message.
   void imageStampCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
+  /// @brief Track latest pointcloud timestamp and receive time.
+  /// @param pointcloud_msg Incoming pointcloud message.
   void pointcloudStampCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
+  /// @brief Handle lifecycle mode changes from lifecycle node.
+  /// @param msg Lifecycle mode payload.
   void lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg);
+  /// @brief Periodic watchdog for dropout extrapolation and idle-spinning publish.
   void watchdogCallback();
+  /// @brief Determine whether extrapolation should trigger for current stream state.
+  /// @param current_time Current node time.
+  /// @param reason Output trigger reason token.
+  /// @return True when extrapolation should be published.
   bool shouldTriggerExtrapolation(const rclcpp::Time & current_time, std::string & reason) const;
+  /// @brief Publish extrapolated target from recent pose history.
+  /// @param current_time Publish timestamp.
+  /// @param reason Trigger reason token.
+  /// @return True when extrapolated target is published.
   bool publishExtrapolatedTarget(const rclcpp::Time & current_time, const std::string & reason);
+  /// @brief Publish placeholder target pose in idle-spinning mode.
+  /// @param current_time Publish timestamp.
   void publishIdleSpinningPose(const rclcpp::Time & current_time);
+  /// @brief Run digit recognizer and publish digit result target.
+  /// @param image_msg Input image message.
   void processDigitRecognition(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
+  /// @brief Validate runtime endpoint QoS reliability compatibility.
+  /// @return True when runtime publishers match expected reliability.
   bool evaluateRuntimeQosCompatibility();
+  /// @brief Check whether synchronized frame is stale or too far in future.
+  /// @param image_msg Synchronized image message.
+  /// @param pointcloud_msg Synchronized pointcloud message.
+  /// @return True when frame should be dropped as stale.
   bool shouldDropAsStale(
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg) const;

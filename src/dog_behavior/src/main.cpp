@@ -1,5 +1,6 @@
 #include "dog_behavior/behavior_node.hpp"
 
+/// @brief Entry point for the dog_behavior ROS 2 node process.
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);

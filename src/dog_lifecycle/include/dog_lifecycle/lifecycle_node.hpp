@@ -21,26 +21,65 @@ namespace dog_lifecycle
 class LifecycleNode : public rclcpp::Node
 {
 public:
+  /// @brief Construct lifecycle node with default node options.
   LifecycleNode();
+  /// @brief Construct lifecycle node with explicit ROS node options.
+  /// @param options ROS node options.
   explicit LifecycleNode(const rclcpp::NodeOptions & options);
+  /// @brief Shutdown hook that clears persistent recovery state.
   ~LifecycleNode() override;
 
+  /// @brief Persist a lifecycle transition for recovery on next startup.
+  /// @param task_phase Transition task phase.
+  /// @param target_state Transition target state.
+  /// @return True when the state is persisted successfully.
   bool PersistTransition(const std::string & task_phase, const std::string & target_state);
+  /// @brief Remove persisted lifecycle state files.
+  /// @return True when persistent state is cleared or absent.
   bool ClearPersistentState();
 
+  /// @brief Inject raw grasp feedback for deterministic unit tests.
+  /// @param raw_feedback Simulated feedback payload.
   void InjectGraspFeedbackForTest(const std::string & raw_feedback);
+  /// @brief Test helper for breaker-open status.
+  /// @return True if breaker is currently open.
   bool IsBreakerOpen() const;
+  /// @brief Test helper for blocked task status.
+  /// @param task_id Task identifier.
+  /// @return True when the task is blocked by breaker state.
   bool IsTaskBlocked(const std::string & task_id) const;
+  /// @brief Test helper for consecutive empty-grasp counter.
+  /// @return Current consecutive empty-grasp count.
   size_t GetConsecutiveEmptyCount() const;
+  /// @brief Test helper for degrade pending state.
+  /// @return True when waiting for degrade acknowledgement.
   bool IsDegradePending() const;
+  /// @brief Test helper for breaker-to-degrade latency metric.
+  /// @return Last measured latency in milliseconds, or -1 when unavailable.
   int64_t GetLastBreakerToDegradeLatencyMs() const;
+  /// @brief Test helper exposing last published recovery context payload.
+  /// @return Recovery context payload string.
   std::string GetLastRecoveryContextForTest() const;
+  /// @brief Test helper for idle-spinning state.
+  /// @return True when idle-spinning mode is active.
   bool IsIdleSpinningForTest() const;
+  /// @brief Test helper exposing last system-mode payload.
+  /// @return Last published system-mode payload.
   std::string GetLastSystemModePayloadForTest() const;
+  /// @brief Test helper for reconnect pending state.
+  /// @return True when reconnect sequence is in progress.
   bool IsReconnectPendingForTest() const;
+  /// @brief Test helper for reconnect transition completion state.
+  /// @return True when both reconnect transition phases are confirmed.
   bool IsReconnectTransitionCompletedForTest() const;
+  /// @brief Test helper for controlled degrade mode state.
+  /// @return True when node entered controlled degrade mode.
   bool IsControlledDegradeModeForTest() const;
+  /// @brief Test helper for reconnect recovery latency metric.
+  /// @return Last reconnect recovery latency in milliseconds.
   int64_t GetLastReconnectRecoveryLatencyMsForTest() const;
+  /// @brief Test helper for restart attempts currently tracked in window.
+  /// @return Number of restart attempts in sliding restart window.
   size_t GetRestartAttemptsInWindowForTest() const;
 
 private:
@@ -67,35 +106,98 @@ private:
     bool has_request_id{false};
   };
 
+  /// @brief Consume grasp feedback stream and drive breaker/degrade logic.
+  /// @param msg Grasp feedback payload message.
   void graspFeedbackCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Consume degrade acknowledgement messages.
+  /// @param msg Degrade acknowledgement payload.
   void degradeAckCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Consume e-stop mode updates.
+  /// @param msg E-stop payload.
   void estopCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Track valid perception frames for heartbeat recovery gating.
+  /// @param msg Perception target frame.
   void validFrameCallback(const dog_interfaces::msg::Target3D::ConstSharedPtr msg);
+  /// @brief Consume transition status acknowledgements for reconnect flow.
+  /// @param msg Transition status payload.
   void lifecycleTransitionStatusCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  /// @brief Validate whether an incoming target frame qualifies as healthy data.
+  /// @param msg Target frame message.
+  /// @return True when frame content is valid.
   bool isValidFrameMessage(const dog_interfaces::msg::Target3D::ConstSharedPtr & msg) const;
+  /// @brief Parse raw grasp feedback payload into structured event.
+  /// @param payload Raw feedback payload.
+  /// @param stamp Reception timestamp.
+  /// @return Parsed grasp feedback event.
   GraspFeedbackEvent parseGraspFeedback(const std::string & payload, const rclcpp::Time & stamp) const;
+  /// @brief Parse degrade acknowledgement payload.
+  /// @param payload Raw ack payload.
+  /// @return Parsed degrade acknowledgement event.
   DegradeAckEvent parseDegradeAck(const std::string & payload) const;
+  /// @brief Parse e-stop payload into boolean active state.
+  /// @param payload Raw e-stop payload.
+  /// @return Parsed active flag, or nullopt when ambiguous.
   std::optional<bool> parseEstopActive(const std::string & payload) const;
+  /// @brief Apply parsed grasp feedback to breaker/degrade state machine.
+  /// @param event Parsed grasp feedback event.
   void processGraspFeedback(const GraspFeedbackEvent & event);
+  /// @brief Periodic heartbeat guard callback.
   void heartbeatTimerCallback();
+  /// @brief Reset breaker counters if no recent empty-grasp events are observed.
+  /// @param now Current node time.
   void resetBreakerIfWindowElapsed(const rclcpp::Time & now);
+  /// @brief Publish degrade command message and arm degrade timeout tracking.
+  /// @param task_id Blocked task identifier.
+  /// @param reason Degrade trigger reason.
   void publishDegradeCommand(const std::string & task_id, const char * reason);
+  /// @brief Publish lifecycle transition command payload.
+  /// @param from_state Transition source state.
+  /// @param to_state Transition destination state.
+  /// @param reason Transition reason.
+  /// @param attempt Reconnect attempt index.
   void publishLifecycleTransition(
     const char * from_state,
     const char * to_state,
     const char * reason,
     uint32_t attempt);
+  /// @brief Publish heartbeat-related health alarm payload.
+  /// @param reason Alarm reason.
+  /// @param attempts Restart attempt count.
+  /// @param since_last_valid_frame_ms Elapsed ms since last valid frame.
   void publishHealthAlarm(const char * reason, uint32_t attempts, int64_t since_last_valid_frame_ms);
+  /// @brief Publish startup recovery context after loading persisted state.
+  /// @param load_result Persisted state load result.
+  /// @param load_cost_ms Load stage latency in milliseconds.
+  /// @param map_cost_ms Mapping stage latency in milliseconds.
+  /// @param total_cost_ms Total recovery publish latency in milliseconds.
   void publishRecoveryContext(
     const StateStoreLoadResult & load_result,
     int64_t load_cost_ms,
     int64_t map_cost_ms,
     int64_t total_cost_ms);
+  /// @brief Handle degrade timeout expiry for request tracking.
+  /// @param request_id Request id associated with timeout timer.
   void degradeTimeoutCallback(uint64_t request_id);
+  /// @brief Publish lifecycle system mode payload.
+  /// @param mode Target mode token.
+  /// @param reason Mode transition reason.
   void publishSystemMode(const std::string & mode, const char * reason);
+  /// @brief Extract value for key from semicolon-separated key-value payload.
+  /// @param payload Input payload.
+  /// @param key Key name to query.
+  /// @return Normalized value or empty string.
   static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
+  /// @brief Convert feedback type enum to stable lowercase text.
+  /// @param type Feedback enum value.
+  /// @return Feedback type string.
   static const char * feedbackTypeToString(GraspFeedbackType type);
+  /// @brief Normalize tokens by removing spaces and lowercasing.
+  /// @param value Raw token.
+  /// @return Normalized token.
   static std::string normalizeToken(const std::string & value);
+  /// @brief Check whether a task is currently blocked while lock is held.
+  /// @param task_id Task identifier.
+  /// @return True when blocked by breaker logic.
   bool isTaskBlockedLocked(const std::string & task_id) const;
 
   std::unique_ptr<IStateStore> state_store_;
