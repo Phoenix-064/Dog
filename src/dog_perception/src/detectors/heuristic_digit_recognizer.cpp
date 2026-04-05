@@ -13,11 +13,17 @@ namespace
 class HeuristicDigitRecognizer final : public IDigitRecognizer
 {
 public:
+  /// @brief 构造启发式数字识别器。
+  /// @param params 识别参数。
+  /// @param logger 日志器。
   HeuristicDigitRecognizer(const DigitRecognizerParams & params, const rclcpp::Logger & logger)
   : params_(params), logger_(logger)
   {
   }
 
+  /// @brief 对输入图像执行启发式数字识别。
+  /// @param view 输入图像视图。
+  /// @return 数字识别结果。
   DigitRecognitionResult infer(const ImageView & view) override
   {
     if (!view.image) {

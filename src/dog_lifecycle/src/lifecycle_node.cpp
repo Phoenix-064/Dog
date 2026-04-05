@@ -19,6 +19,9 @@ namespace dog_lifecycle
 namespace
 {
 
+/// @brief 对字符串进行百分号编码，适用于键值负载安全传输。
+/// @param value 原始字符串。
+/// @return 百分号编码后的字符串。
 std::string percentEncode(const std::string & value)
 {
   static constexpr char kHex[] = "0123456789ABCDEF";

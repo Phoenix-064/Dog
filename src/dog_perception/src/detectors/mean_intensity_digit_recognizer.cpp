@@ -12,11 +12,17 @@ namespace
 class MeanIntensityDigitRecognizer final : public IDigitRecognizer
 {
 public:
+  /// @brief 构造均值强度数字识别器。
+  /// @param params 识别参数。
+  /// @param logger 日志器。
   MeanIntensityDigitRecognizer(const DigitRecognizerParams & params, const rclcpp::Logger & logger)
   : params_(params), logger_(logger)
   {
   }
 
+  /// @brief 对输入图像执行均值强度数字识别。
+  /// @param view 输入图像视图。
+  /// @return 数字识别结果。
   DigitRecognitionResult infer(const ImageView & view) override
   {
     if (!view.image || view.image->width == 0U || view.image->height == 0U || view.image->data.empty()) {

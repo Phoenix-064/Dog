@@ -17,11 +17,17 @@ namespace
 class MinimalTarget3DSolver final : public ITarget3DSolver
 {
 public:
+  /// @brief 构造最小化 3D 目标求解器。
+  /// @param logger 日志器。
   explicit MinimalTarget3DSolver(const rclcpp::Logger & logger)
   : logger_(logger)
   {
   }
 
+  /// @brief 基于同步帧生成简化 Target3D 输出。
+  /// @param frame 同步图像-点云帧。
+  /// @param output 待填充输出消息。
+  /// @return 求解成功时返回 true。
   bool solve(const SyncedSensorFrame & frame, dog_interfaces::msg::Target3D & output) override
   {
     if (!frame.image || !frame.pointcloud) {
@@ -50,11 +56,17 @@ private:
 class MinimalPnpSolver final : public ITarget3DSolver
 {
 public:
+  /// @brief 构造最小化 PnP 风格求解器。
+  /// @param logger 日志器。
   explicit MinimalPnpSolver(const rclcpp::Logger & logger)
   : logger_(logger)
   {
   }
 
+  /// @brief 基于点云统计结果求解目标 3D 位置。
+  /// @param frame 同步图像-点云帧。
+  /// @param output 待填充输出消息。
+  /// @return 求解成功时返回 true。
   bool solve(const SyncedSensorFrame & frame, dog_interfaces::msg::Target3D & output) override
   {
     if (!frame.image || !frame.pointcloud) {

@@ -21,6 +21,11 @@ namespace dog_perception
 namespace
 {
 
+/// @brief 读取并校验 YAML 中必填且非空的字符串字段。
+/// @param node YAML 节点。
+/// @param field_name 字段名。
+/// @param yaml_path YAML 文件路径，用于错误提示。
+/// @return 字段值。
 std::string requireNonEmptyString(
   const YAML::Node & node,
   const char * field_name,
@@ -37,6 +42,11 @@ std::string requireNonEmptyString(
   return value;
 }
 
+/// @brief 读取并校验 YAML 中必填且为有限值的标量字段。
+/// @param node YAML 节点。
+/// @param field_name 字段名。
+/// @param yaml_path YAML 文件路径，用于错误提示。
+/// @return 字段数值。
 double requireFiniteScalar(
   const YAML::Node & node,
   const char * field_name,
@@ -53,6 +63,10 @@ double requireFiniteScalar(
   return value;
 }
 
+/// @brief 将字符串形式的可靠性参数解析为 RMW 可靠性策略。
+/// @param reliability 可靠性配置字符串。
+/// @param logger 日志器。
+/// @return RMW 可靠性策略枚举值。
 rmw_qos_reliability_policy_t resolveReliability(
   const std::string & reliability,
   const rclcpp::Logger & logger)
@@ -72,6 +86,9 @@ rmw_qos_reliability_policy_t resolveReliability(
           ". Allowed: best_effort, reliable");
 }
 
+/// @brief 将可靠性配置字符串映射为 rclcpp 可靠性策略。
+/// @param reliability 可靠性配置字符串。
+/// @return rclcpp 可靠性策略。
 rclcpp::ReliabilityPolicy toReliabilityPolicy(const std::string & reliability)
 {
   if (reliability == "best_effort") {
@@ -80,11 +97,17 @@ rclcpp::ReliabilityPolicy toReliabilityPolicy(const std::string & reliability)
   return rclcpp::ReliabilityPolicy::Reliable;
 }
 
+/// @brief 将可靠性策略转换为可读字符串。
+/// @param reliability 可靠性策略。
+/// @return 可靠性文本表示。
 std::string_view reliabilityToString(const rclcpp::ReliabilityPolicy reliability)
 {
   return reliability == rclcpp::ReliabilityPolicy::BestEffort ? "best_effort" : "reliable";
 }
 
+/// @brief 计算样本集合的 95 分位值。
+/// @param samples 时延样本集合。
+/// @return 95 分位值；样本为空时返回 0。
 double percentile95(const boost::circular_buffer<double> & samples)
 {
   if (samples.empty()) {

@@ -12,6 +12,9 @@ namespace dog_behavior
 namespace
 {
 
+/// @brief 将十六进制字符转换为对应数值。
+/// @param c 十六进制字符。
+/// @return 有效时返回 0-15，无效时返回 -1。
 int hexDigitValue(const char c)
 {
   if (c >= '0' && c <= '9') {
@@ -26,6 +29,9 @@ int hexDigitValue(const char c)
   return -1;
 }
 
+/// @brief 对百分号编码字符串执行解码。
+/// @param value 可能包含 `%xx` 编码片段的字符串。
+/// @return 解码后的字符串。
 std::string percentDecode(const std::string & value)
 {
   std::string decoded;

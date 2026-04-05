@@ -29,6 +29,7 @@ struct FileLockGuard
 {
   int fd{-1};
 
+  /// @brief 析构时自动释放文件锁并关闭文件描述符。
   ~FileLockGuard()
   {
     if (fd >= 0) {
@@ -38,6 +39,11 @@ struct FileLockGuard
   }
 };
 
+/// @brief 获取状态文件对应的进程间文件锁。
+/// @param state_file_path 状态文件路径。
+/// @param lock_op 锁操作类型（如 `LOCK_EX`/`LOCK_SH`）。
+/// @param guard 输出锁守卫对象。
+/// @return 加锁结果。
 StateStoreResult AcquireLock(const std::string & state_file_path, const int lock_op, FileLockGuard & guard)
 {
   if (state_file_path.empty()) {

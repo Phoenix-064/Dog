@@ -11,18 +11,24 @@ namespace dog_perception
 
 namespace
 {
+/// @brief 获取数字识别器注册表单例。
+/// @return 类型到创建器的映射引用。
 std::unordered_map<std::string, DigitRecognizerCreator> & recognizerRegistry()
 {
   static std::unordered_map<std::string, DigitRecognizerCreator> registry;
   return registry;
 }
 
+/// @brief 获取数字识别器注册表互斥锁单例。
+/// @return 互斥锁引用。
 std::mutex & recognizerRegistryMutex()
 {
   static std::mutex registry_mutex;
   return registry_mutex;
 }
 
+/// @brief 确保内置数字识别器只注册一次。
+/// @param logger 日志器。
 void ensureBuiltinDigitRecognizers(const rclcpp::Logger & logger)
 {
   static std::once_flag register_once;
