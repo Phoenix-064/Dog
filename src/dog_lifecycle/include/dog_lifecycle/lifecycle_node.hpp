@@ -107,6 +107,7 @@ private:
   int64_t heartbeat_timeout_ms_{2000};
   int64_t heartbeat_check_period_ms_{100};
   int64_t reconnect_min_interval_ms_{500};
+  int64_t reconnect_pending_timeout_ms_{0};
   int64_t max_restart_attempts_{3};
   int64_t restart_window_ms_{10000};
   int64_t valid_frame_recovery_consecutive_{2};

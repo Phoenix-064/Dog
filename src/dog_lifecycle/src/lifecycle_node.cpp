@@ -66,6 +66,7 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
   heartbeat_timeout_ms_ = declare_parameter<int64_t>("heartbeat_timeout_ms", 2000);
   heartbeat_check_period_ms_ = declare_parameter<int64_t>("heartbeat_check_period_ms", 100);
   reconnect_min_interval_ms_ = declare_parameter<int64_t>("reconnect_min_interval_ms", 500);
+  reconnect_pending_timeout_ms_ = declare_parameter<int64_t>("reconnect_pending_timeout_ms", 0);
   max_restart_attempts_ = declare_parameter<int64_t>("max_restart_attempts", 3);
   restart_window_ms_ = declare_parameter<int64_t>("restart_window_ms", 10000);
   valid_frame_recovery_consecutive_ = declare_parameter<int64_t>("valid_frame_recovery_consecutive", 2);
@@ -185,6 +186,13 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     restart_window_ms_ = 10000;
   }
 
+  if (reconnect_pending_timeout_ms_ <= 0) {
+    const auto adaptive_timeout_ms = std::max<int64_t>(heartbeat_timeout_ms_ * 4, 300);
+    // Keep pending timeout within restart window so attempts can accumulate for degrade.
+    const auto window_bound_timeout_ms = std::max<int64_t>(restart_window_ms_ - 1, 1);
+    reconnect_pending_timeout_ms_ = std::min<int64_t>(adaptive_timeout_ms, window_bound_timeout_ms);
+  }
+
   if (valid_frame_recovery_consecutive_ <= 0) {
     RCLCPP_WARN(
       get_logger(),
@@ -294,7 +302,7 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     get_logger(),
-    "heartbeat_guard initialized, valid_frame_topic=%s, transition_topic=%s, alarm_topic=%s, monitored_node=%s, timeout_ms=%ld, check_period_ms=%ld, min_interval_ms=%ld, max_restart_attempts=%ld, restart_window_ms=%ld",
+    "heartbeat_guard initialized, valid_frame_topic=%s, transition_topic=%s, alarm_topic=%s, monitored_node=%s, timeout_ms=%ld, check_period_ms=%ld, min_interval_ms=%ld, pending_timeout_ms=%ld, max_restart_attempts=%ld, restart_window_ms=%ld",
     valid_frame_topic_.c_str(),
     lifecycle_transition_topic_.c_str(),
     health_alarm_topic_.c_str(),
@@ -302,6 +310,7 @@ LifecycleNode::LifecycleNode(const rclcpp::NodeOptions & options)
     heartbeat_timeout_ms_,
     heartbeat_check_period_ms_,
     reconnect_min_interval_ms_,
+    reconnect_pending_timeout_ms_,
     max_restart_attempts_,
     restart_window_ms_);
 }
@@ -884,7 +893,23 @@ void LifecycleNode::heartbeatTimerCallback()
     // Keep a single reconnect attempt in flight to avoid attempt inflation while
     // waiting for transition acks or valid-frame latch completion.
     if (reconnect_pending_) {
-      return;
+      const auto pending_elapsed_ms = (now_time - last_reconnect_start_time_).nanoseconds() / 1000000;
+      if (pending_elapsed_ms < reconnect_pending_timeout_ms_) {
+        return;
+      }
+
+      reconnect_pending_ = false;
+      reconnect_valid_frame_consecutive_ = 0U;
+      reconnect_transition_inactive_confirmed_ = false;
+      reconnect_transition_active_confirmed_ = false;
+      reconnect_transition_attempt_ = 0U;
+
+      RCLCPP_WARN(
+        get_logger(),
+        "heartbeat_reconnect_pending_timeout node=%s elapsed_ms=%ld timeout_ms=%ld",
+        monitored_node_name_.c_str(),
+        pending_elapsed_ms,
+        reconnect_pending_timeout_ms_);
     }
 
     if (has_last_reconnect_trigger_time_) {
