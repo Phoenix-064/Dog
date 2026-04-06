@@ -7,3 +7,6 @@
 4. [系统集成 (Integration Architecture)](integration-architecture.md)
 5. [系统架构 (System Architecture)](architecture.md)
 6. [接口架构规约草案 (Interface Architecture)](interface-architecture.md)
+7. [dog_lifecycle AI 开发查询文档](dog-lifecycle-ai-reference.md)
+8. [dog_behavior AI 开发查询文档](dog-behavior-ai-reference.md)
+9. [dog_perception AI 开发查询文档](dog-perception-ai-reference.md)
