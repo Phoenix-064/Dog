@@ -52,7 +52,42 @@ ros2 launch dog_behavior launch.py
 ```
 
 - Launch 文件位置：`src/dog_behavior/launch/launch.py`
-- 该命令会同时启动：`dog_perception_node`、`dog_lifecycle_node`、`dog_behavior_node`
+- 该命令会启动项目核心节点：`dog_perception_node`、`dog_lifecycle_node`、`dog_behavior_node`
+- 该命令也会尝试启动第三方组件：`livox_ros_driver2`、`point_lio`
+- 若第三方包未构建或未安装到当前 overlay，启动时会自动跳过并打印提示，不影响核心节点拉起
+
+### 3.5 启动参数（统一入口）
+
+可用参数如下：
+
+- `use_livox`（默认：`true`）：是否启动 `livox_ros_driver2`
+- `livox_model`（默认：`mid360`，可选：`mid360` / `hap`）：选择 Livox 启动配置
+- `use_point_lio`（默认：`true`）：是否启动 `point_lio`
+- `use_point_lio_rviz`（默认：`false`）：是否由 `point_lio` 同时拉起 RViz
+- `use_perception_camera`（默认：`false`）：是否启动 `dog_perception_camera_node`
+
+示例：
+
+```bash
+# 默认：核心节点 + 尝试启动第三方
+ros2 launch dog_behavior launch.py
+
+# 指定 HAP 配置
+ros2 launch dog_behavior launch.py livox_model:=hap
+
+# 打开 point_lio 的 RViz
+ros2 launch dog_behavior launch.py use_point_lio_rviz:=true
+
+# 同时启动相机发布节点
+ros2 launch dog_behavior launch.py use_perception_camera:=true
+
+# 仅启动项目核心节点（关闭第三方）
+ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
+```
+
+### 3.6 第三方组件启用前提
+
+若希望 `livox_ros_driver2` 和 `point_lio` 实际参与运行，需要先完成它们在当前工作区中的可构建与可发现（`ros2 pkg list` 可见）。
 
 ## 4. 仓库结构
 ```text
