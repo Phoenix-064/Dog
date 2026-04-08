@@ -23,7 +23,7 @@ sudo apt update
 sudo apt install -y ros-humble-vision-msgs
 ~~~
 
-## 3. 5 分钟上手
+## 3. Quick Start
 
 ### 3.1 构建工作区
 
