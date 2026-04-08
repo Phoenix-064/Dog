@@ -5,6 +5,8 @@
 #include <dog_interfaces/msg/target3_d.hpp>
 #include <dog_interfaces/msg/target3_d_array.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <std_msgs/msg/string.hpp>
 
 #include <deque>
@@ -19,9 +21,12 @@
 namespace dog_lifecycle
 {
 
-class LifecycleNode : public rclcpp::Node
+class LifecycleNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
+  using CallbackReturn =
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+
   /// @brief 使用默认节点选项构造生命周期节点。
   LifecycleNode();
   /// @brief 使用显式 ROS 节点选项构造生命周期节点。
@@ -82,6 +87,13 @@ public:
   /// @brief 用于测试的窗口内重启尝试次数查询。
   /// @return 滑动重启窗口中的重试次数。
   size_t GetRestartAttemptsInWindowForTest() const;
+
+protected:
+  CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State & state) override;
 
 private:
   enum class GraspFeedbackType
@@ -202,6 +214,10 @@ private:
   bool isTaskBlockedLocked(const std::string & task_id) const;
 
   std::unique_ptr<IStateStore> state_store_;
+  std::optional<StateStoreLoadResult> startup_load_result_;
+  int64_t startup_load_cost_ms_{0};
+  int64_t startup_map_cost_ms_{0};
+  int64_t startup_total_cost_ms_{0};
   uint32_t supported_state_version_{1U};
 
   int64_t empty_grasp_threshold_{2};
@@ -273,11 +289,11 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr estop_sub_;
   rclcpp::Subscription<dog_interfaces::msg::Target3DArray>::SharedPtr valid_frame_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_transition_status_sub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr system_mode_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_transition_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr health_alarm_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr degrade_command_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr recovery_context_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr system_mode_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr lifecycle_transition_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr health_alarm_pub_;
   rclcpp::TimerBase::SharedPtr degrade_timeout_timer_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 };

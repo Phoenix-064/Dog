@@ -33,7 +33,7 @@ LifecycleNode 在运行时承担四条主线：
 1. 抓取反馈熔断：连续空抓触发降级命令。
 2. 心跳守护与重连：感知帧超时触发生命周期重启尝试；超过窗口上限进入受控降级。
 3. 急停模式切换：estop 信号驱动 system mode 在 normal 与 idle_spinning 间切换。
-4. 启停持久化：启动加载恢复上下文，析构清理持久化文件。
+4. 启停持久化：configure 阶段加载并缓存恢复上下文，activate 阶段发布；析构清理持久化文件。
 
 ## 3. 函数调用结构（可检索）
 
@@ -41,32 +41,34 @@ LifecycleNode 在运行时承担四条主线：
 
 入口链路：
 
-1. main 调用构造与 spin：[src/dog_lifecycle/src/main.cpp#L4](../src/dog_lifecycle/src/main.cpp#L4)
+1. main 构造节点并触发生命周期迁移 configure/activate：[src/dog_lifecycle/src/main.cpp#L10](../src/dog_lifecycle/src/main.cpp#L10)
 2. 默认构造转发到带 options 构造：[src/dog_lifecycle/src/lifecycle_node.cpp#L48](../src/dog_lifecycle/src/lifecycle_node.cpp#L48)
-3. 主构造函数执行参数声明、校验、发布器/订阅器/定时器初始化：[src/dog_lifecycle/src/lifecycle_node.cpp#L53](../src/dog_lifecycle/src/lifecycle_node.cpp#L53)
-4. 构造阶段读取状态并发布 recovery context：[src/dog_lifecycle/src/lifecycle_node.cpp#L250](../src/dog_lifecycle/src/lifecycle_node.cpp#L250)
-5. 启动默认系统模式 normal：[src/dog_lifecycle/src/lifecycle_node.cpp#L306](../src/dog_lifecycle/src/lifecycle_node.cpp#L306)
+3. 构造阶段仅声明参数（不启动通信）：[src/dog_lifecycle/src/lifecycle_node.cpp#L53](../src/dog_lifecycle/src/lifecycle_node.cpp#L53)
+4. on_configure 执行参数读取/校验、状态存储初始化、恢复上下文加载缓存：[src/dog_lifecycle/src/lifecycle_node.cpp#L85](../src/dog_lifecycle/src/lifecycle_node.cpp#L85)
+5. on_activate 激活 LifecyclePublisher、创建订阅/定时器并发布恢复上下文与默认模式：[src/dog_lifecycle/src/lifecycle_node.cpp#L316](../src/dog_lifecycle/src/lifecycle_node.cpp#L316)
+6. on_deactivate/on_cleanup 负责停用通信并释放资源：[src/dog_lifecycle/src/lifecycle_node.cpp#L377](../src/dog_lifecycle/src/lifecycle_node.cpp#L377)
 
 ```mermaid
 flowchart TD
   A[main] --> B[LifecycleNode::LifecycleNode(options)]
-  B --> C[declare_parameter + validate]
-  C --> D[create publishers/subscribers/timer]
-  D --> E[state_store.Load]
-  E --> F[publishRecoveryContext]
-  F --> G[publishSystemMode normal]
+  B --> C[declare_parameter only]
+  C --> D[trigger configure]
+  D --> E[on_configure: validate + create publishers + state_store.Load]
+  E --> F[trigger activate]
+  F --> G[on_activate: publisher.on_activate + create subs/timer]
+  G --> H[publishRecoveryContext + publishSystemMode normal]
 ```
 
 ### 3.2 抓取反馈到降级链
 
 关键入口：
 
-1. 订阅回调入口：[src/dog_lifecycle/src/lifecycle_node.cpp#L461](../src/dog_lifecycle/src/lifecycle_node.cpp#L461)
-2. 解析反馈：[src/dog_lifecycle/src/lifecycle_node.cpp#L614](../src/dog_lifecycle/src/lifecycle_node.cpp#L614)
-3. 熔断状态机处理：[src/dog_lifecycle/src/lifecycle_node.cpp#L654](../src/dog_lifecycle/src/lifecycle_node.cpp#L654)
-4. 发布降级命令：[src/dog_lifecycle/src/lifecycle_node.cpp#L1005](../src/dog_lifecycle/src/lifecycle_node.cpp#L1005)
-5. 降级确认回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L467](../src/dog_lifecycle/src/lifecycle_node.cpp#L467)
-6. 降级超时回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L1092](../src/dog_lifecycle/src/lifecycle_node.cpp#L1092)
+1. 订阅回调入口：[src/dog_lifecycle/src/lifecycle_node.cpp#L577](../src/dog_lifecycle/src/lifecycle_node.cpp#L577)
+2. 解析反馈：[src/dog_lifecycle/src/lifecycle_node.cpp#L730](../src/dog_lifecycle/src/lifecycle_node.cpp#L730)
+3. 熔断状态机处理：[src/dog_lifecycle/src/lifecycle_node.cpp#L770](../src/dog_lifecycle/src/lifecycle_node.cpp#L770)
+4. 发布降级命令：[src/dog_lifecycle/src/lifecycle_node.cpp#L1121](../src/dog_lifecycle/src/lifecycle_node.cpp#L1121)
+5. 降级确认回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L583](../src/dog_lifecycle/src/lifecycle_node.cpp#L583)
+6. 降级超时回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L1208](../src/dog_lifecycle/src/lifecycle_node.cpp#L1208)
 
 状态转移摘要：
 
@@ -94,11 +96,11 @@ flowchart TD
 
 关键入口：
 
-1. 心跳定时器：[src/dog_lifecycle/src/lifecycle_node.cpp#L876](../src/dog_lifecycle/src/lifecycle_node.cpp#L876)
-2. 有效帧回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L764](../src/dog_lifecycle/src/lifecycle_node.cpp#L764)
-3. 迁移状态回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L805](../src/dog_lifecycle/src/lifecycle_node.cpp#L805)
-4. 发布 lifecycle transition：[src/dog_lifecycle/src/lifecycle_node.cpp#L1134](../src/dog_lifecycle/src/lifecycle_node.cpp#L1134)
-5. 发布健康告警：[src/dog_lifecycle/src/lifecycle_node.cpp#L1159](../src/dog_lifecycle/src/lifecycle_node.cpp#L1159)
+1. 心跳定时器：[src/dog_lifecycle/src/lifecycle_node.cpp#L992](../src/dog_lifecycle/src/lifecycle_node.cpp#L992)
+2. 有效帧回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L880](../src/dog_lifecycle/src/lifecycle_node.cpp#L880)
+3. 迁移状态回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L921](../src/dog_lifecycle/src/lifecycle_node.cpp#L921)
+4. 发布 lifecycle transition：[src/dog_lifecycle/src/lifecycle_node.cpp#L1250](../src/dog_lifecycle/src/lifecycle_node.cpp#L1250)
+5. 发布健康告警：[src/dog_lifecycle/src/lifecycle_node.cpp#L1275](../src/dog_lifecycle/src/lifecycle_node.cpp#L1275)
 
 重连关键规则：
 
@@ -130,9 +132,9 @@ flowchart TD
 
 关键入口：
 
-1. estop 回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L510](../src/dog_lifecycle/src/lifecycle_node.cpp#L510)
-2. 解析 active/mode token：[src/dog_lifecycle/src/lifecycle_node.cpp#L571](../src/dog_lifecycle/src/lifecycle_node.cpp#L571)
-3. 发布 system mode：[src/dog_lifecycle/src/lifecycle_node.cpp#L1115](../src/dog_lifecycle/src/lifecycle_node.cpp#L1115)
+1. estop 回调：[src/dog_lifecycle/src/lifecycle_node.cpp#L626](../src/dog_lifecycle/src/lifecycle_node.cpp#L626)
+2. 解析 active/mode token：[src/dog_lifecycle/src/lifecycle_node.cpp#L687](../src/dog_lifecycle/src/lifecycle_node.cpp#L687)
+3. 发布 system mode：[src/dog_lifecycle/src/lifecycle_node.cpp#L1231](../src/dog_lifecycle/src/lifecycle_node.cpp#L1231)
 
 行为：
 
@@ -144,9 +146,9 @@ flowchart TD
 
 节点层接口：
 
-1. PersistTransition：[src/dog_lifecycle/src/lifecycle_node.cpp#L328](../src/dog_lifecycle/src/lifecycle_node.cpp#L328)
-2. ClearPersistentState：[src/dog_lifecycle/src/lifecycle_node.cpp#L361](../src/dog_lifecycle/src/lifecycle_node.cpp#L361)
-3. publishRecoveryContext：[src/dog_lifecycle/src/lifecycle_node.cpp#L1047](../src/dog_lifecycle/src/lifecycle_node.cpp#L1047)
+1. PersistTransition：[src/dog_lifecycle/src/lifecycle_node.cpp#L444](../src/dog_lifecycle/src/lifecycle_node.cpp#L444)
+2. ClearPersistentState：[src/dog_lifecycle/src/lifecycle_node.cpp#L477](../src/dog_lifecycle/src/lifecycle_node.cpp#L477)
+3. publishRecoveryContext：[src/dog_lifecycle/src/lifecycle_node.cpp#L1163](../src/dog_lifecycle/src/lifecycle_node.cpp#L1163)
 
 存储层接口：
 
@@ -196,7 +198,9 @@ Load 回退策略：
 
 ## 5. 参数清单与默认值
 
-参数声明与校验位置：[src/dog_lifecycle/src/lifecycle_node.cpp#L57](../src/dog_lifecycle/src/lifecycle_node.cpp#L57)
+参数声明位置：[src/dog_lifecycle/src/lifecycle_node.cpp#L53](../src/dog_lifecycle/src/lifecycle_node.cpp#L53)
+
+参数读取与校验位置：[src/dog_lifecycle/src/lifecycle_node.cpp#L85](../src/dog_lifecycle/src/lifecycle_node.cpp#L85)
 
 核心参数：
 
@@ -244,18 +248,19 @@ YAML 文件键：task_phase, timestamp_ms, target_state, version。
 
 关键测试锚点：
 
-1. 熔断开启与任务阻断：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L105](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L105)
-2. breaker->degrade 时延小于 1 秒：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L162](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L162)
-3. 重置窗口避免误触发：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L201](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L201)
-4. estop 模式切换：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L252](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L252)
-5. 心跳超时触发重连：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L307](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L307)
-6. 重连恢复时延小于 2 秒：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L362](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L362)
-7. 达到重启上限触发受控降级与告警：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L458](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L458)
-8. pending 期间 attempt 不膨胀：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L531](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L531)
-9. 小窗口自适应 pending timeout 可触发降级：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L586](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L586)
-10. degrade 状态下 estop 仍生效：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L646](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L646)
-11. 边界条件 attempts==max 允许该次尝试：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L734](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L734)
-12. 启动恢复上下文路径（recovered/cold_start/双损坏）：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L786](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L786)
+1. 生命周期 API 可迁移到 active：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L127](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L127)
+2. 熔断开启与任务阻断：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L146](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L146)
+3. breaker->degrade 时延小于 1 秒：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L204](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L204)
+4. 重置窗口避免误触发：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L244](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L244)
+5. estop 模式切换：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L296](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L296)
+6. 心跳超时触发重连：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L352](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L352)
+7. 重连恢复时延小于 2 秒：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L408](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L408)
+8. 达到重启上限触发受控降级与告警：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L505](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L505)
+9. pending 期间 attempt 不膨胀：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L579](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L579)
+10. 小窗口自适应 pending timeout 可触发降级：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L635](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L635)
+11. degrade 状态下 estop 仍生效：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L696](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L696)
+12. 边界条件 attempts==max 允许该次尝试：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L785](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L785)
+13. 启动恢复上下文路径（recovered/cold_start/双损坏）：[src/dog_lifecycle/test/test_lifecycle_node.cpp#L838](../src/dog_lifecycle/test/test_lifecycle_node.cpp#L838)
 
 ### 7.2 YamlStateStore 行为测试
 
@@ -284,10 +289,10 @@ YAML 文件键：task_phase, timestamp_ms, target_state, version。
 
 可用于变更影响分析的函数入口：
 
-1. [src/dog_lifecycle/src/lifecycle_node.cpp#L876](../src/dog_lifecycle/src/lifecycle_node.cpp#L876)
-2. [src/dog_lifecycle/src/lifecycle_node.cpp#L654](../src/dog_lifecycle/src/lifecycle_node.cpp#L654)
-3. [src/dog_lifecycle/src/lifecycle_node.cpp#L764](../src/dog_lifecycle/src/lifecycle_node.cpp#L764)
-4. [src/dog_lifecycle/src/lifecycle_node.cpp#L805](../src/dog_lifecycle/src/lifecycle_node.cpp#L805)
+1. [src/dog_lifecycle/src/lifecycle_node.cpp#L992](../src/dog_lifecycle/src/lifecycle_node.cpp#L992)
+2. [src/dog_lifecycle/src/lifecycle_node.cpp#L770](../src/dog_lifecycle/src/lifecycle_node.cpp#L770)
+3. [src/dog_lifecycle/src/lifecycle_node.cpp#L880](../src/dog_lifecycle/src/lifecycle_node.cpp#L880)
+4. [src/dog_lifecycle/src/lifecycle_node.cpp#L921](../src/dog_lifecycle/src/lifecycle_node.cpp#L921)
 5. [src/dog_lifecycle/src/yaml_state_store.cpp#L127](../src/dog_lifecycle/src/yaml_state_store.cpp#L127)
 
 ## 9. 维护建议

@@ -2,6 +2,8 @@
 
 #include <dog_interfaces/msg/target3_d.hpp>
 #include <dog_interfaces/msg/target3_d_array.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
+#include <lifecycle_msgs/msg/transition.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -42,6 +44,26 @@ bool waitUntil(
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   return condition();
+}
+
+bool activateLifecycleNode(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<dog_lifecycle::LifecycleNode> & node)
+{
+  const auto configured_state =
+    node->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+  if (configured_state.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+    return false;
+  }
+
+  const auto activated_state =
+    node->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+  if (activated_state.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+    return false;
+  }
+
+  spinFor(executor, std::chrono::milliseconds(20));
+  return true;
 }
 
 std::string extractPayloadValue(const std::string & payload, const std::string & key)
@@ -102,6 +124,25 @@ TEST_F(LifecycleNodeTest, NodeName)
   EXPECT_STREQ(node->get_name(), "dog_lifecycle");
 }
 
+TEST_F(LifecycleNodeTest, NodeTransitionsToActiveViaLifecycleAPI)
+{
+  auto lifecycle_node = std::make_shared<dog_lifecycle::LifecycleNode>();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(lifecycle_node->get_node_base_interface());
+
+  EXPECT_EQ(
+    lifecycle_node->get_current_state().id(),
+    lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED);
+
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
+  EXPECT_EQ(
+    lifecycle_node->get_current_state().id(),
+    lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+
+  executor.remove_node(lifecycle_node->get_node_base_interface());
+}
+
 TEST_F(LifecycleNodeTest, ConsecutiveEmptyReachedThresholdOpensBreakerAndBlocksTask)
 {
   const std::string feedback_topic = "/test/lifecycle/grasp_feedback";
@@ -127,8 +168,9 @@ TEST_F(LifecycleNodeTest, ConsecutiveEmptyReachedThresholdOpensBreakerAndBlocksT
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return io_node->count_subscribers(feedback_topic) > 0u && io_node->count_publishers(degrade_topic) > 0u;
@@ -155,7 +197,7 @@ TEST_F(LifecycleNodeTest, ConsecutiveEmptyReachedThresholdOpensBreakerAndBlocksT
   EXPECT_EQ(lifecycle_node->GetConsecutiveEmptyCount(), 2U);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)degrade_sub;
 }
 
@@ -175,8 +217,9 @@ TEST_F(LifecycleNodeTest, BreakerTriggerToDegradeLatencyIsBelowOneSecond)
   auto feedback_pub = io_node->create_publisher<std_msgs::msg::String>(feedback_topic, 10);
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return io_node->count_subscribers(feedback_topic) > 0u;
@@ -195,7 +238,7 @@ TEST_F(LifecycleNodeTest, BreakerTriggerToDegradeLatencyIsBelowOneSecond)
   EXPECT_LT(lifecycle_node->GetLastBreakerToDegradeLatencyMs(), 1000);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
 }
 
 TEST_F(LifecycleNodeTest, ResetWindowClearsCounterAndAvoidsFalseTrigger)
@@ -223,8 +266,9 @@ TEST_F(LifecycleNodeTest, ResetWindowClearsCounterAndAvoidsFalseTrigger)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return io_node->count_subscribers(feedback_topic) > 0u;
@@ -245,7 +289,7 @@ TEST_F(LifecycleNodeTest, ResetWindowClearsCounterAndAvoidsFalseTrigger)
   EXPECT_TRUE(degrade_command.empty());
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)degrade_sub;
 }
 
@@ -273,8 +317,9 @@ TEST_F(LifecycleNodeTest, EstopSwitchesIdleSpinningModeAndRecoversToNormal)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return io_node->count_subscribers(estop_topic) > 0u;
@@ -300,7 +345,7 @@ TEST_F(LifecycleNodeTest, EstopSwitchesIdleSpinningModeAndRecoversToNormal)
   EXPECT_FALSE(latest_mode_payload.empty());
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)mode_sub;
 }
 
@@ -333,8 +378,9 @@ TEST_F(LifecycleNodeTest, HeartbeatTimeoutTriggersLifecycleReconnect)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -355,7 +401,7 @@ TEST_F(LifecycleNodeTest, HeartbeatTimeoutTriggersLifecycleReconnect)
   EXPECT_NE(transitions[1].find("to=active"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)transition_sub;
 }
 
@@ -394,8 +440,9 @@ TEST_F(LifecycleNodeTest, ValidFrameLatchMarksReconnectRecoveredWithinTwoSeconds
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -451,7 +498,7 @@ TEST_F(LifecycleNodeTest, ValidFrameLatchMarksReconnectRecoveredWithinTwoSeconds
   EXPECT_LT(lifecycle_node->GetLastReconnectRecoveryLatencyMsForTest(), 2000);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)transition_sub;
 }
 
@@ -501,8 +548,9 @@ TEST_F(LifecycleNodeTest, RestartLimitTriggersControlledDegradeAndAlarm)
     [](const std_msgs::msg::String::ConstSharedPtr) {});
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -522,7 +570,7 @@ TEST_F(LifecycleNodeTest, RestartLimitTriggersControlledDegradeAndAlarm)
   EXPECT_FALSE(lifecycle_node->IsReconnectPendingForTest());
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)alarm_sub;
   (void)mode_sub;
   (void)transition_sub;
@@ -557,8 +605,9 @@ TEST_F(LifecycleNodeTest, ReconnectPendingDoesNotAccumulateRestartAttempts)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -579,7 +628,7 @@ TEST_F(LifecycleNodeTest, ReconnectPendingDoesNotAccumulateRestartAttempts)
   EXPECT_TRUE(lifecycle_node->IsReconnectPendingForTest());
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)transition_sub;
 }
 
@@ -620,8 +669,9 @@ TEST_F(LifecycleNodeTest, AdaptivePendingTimeoutRespectsSmallRestartWindowAndCan
     [](const std_msgs::msg::String::ConstSharedPtr) {});
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -638,7 +688,7 @@ TEST_F(LifecycleNodeTest, AdaptivePendingTimeoutRespectsSmallRestartWindowAndCan
   EXPECT_NE(alarm_payload.find("type=heartbeat_restart_limit"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)alarm_sub;
   (void)transition_sub;
 }
@@ -694,8 +744,9 @@ TEST_F(LifecycleNodeTest, EstopStillWorksDuringControlledDegrade)
     [](const std_msgs::msg::String::ConstSharedPtr) {});
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u &&
@@ -725,7 +776,7 @@ TEST_F(LifecycleNodeTest, EstopStillWorksDuringControlledDegrade)
   EXPECT_NE(mode_payload.find("mode=idle_spinning"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)alarm_sub;
   (void)mode_sub;
   (void)transition_sub;
@@ -760,8 +811,9 @@ TEST_F(LifecycleNodeTest, MaxRestartAttemptsBoundaryAllowsAttemptAtEquality)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(600), [&]() {
     return io_node->count_subscribers(valid_frame_topic) > 0u;
@@ -779,7 +831,7 @@ TEST_F(LifecycleNodeTest, MaxRestartAttemptsBoundaryAllowsAttemptAtEquality)
   EXPECT_FALSE(lifecycle_node->IsControlledDegradeModeForTest());
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)transition_sub;
 }
 
@@ -822,8 +874,9 @@ TEST_F(LifecycleNodeTest, StartupPublishesRecoveredContextFromValidState)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
     return !last_recovery_payload.empty();
@@ -834,7 +887,7 @@ TEST_F(LifecycleNodeTest, StartupPublishesRecoveredContextFromValidState)
   EXPECT_NE(last_recovery_payload.find("target_state=done"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)recovery_sub;
   fs::remove_all(test_dir);
 }
@@ -882,8 +935,9 @@ TEST_F(LifecycleNodeTest, StartupFallsBackToBackupWhenPrimaryIsCorrupted)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
     return !last_recovery_payload.empty();
@@ -893,7 +947,7 @@ TEST_F(LifecycleNodeTest, StartupFallsBackToBackupWhenPrimaryIsCorrupted)
   EXPECT_NE(last_recovery_payload.find("task_phase=phase_from_backup"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)recovery_sub;
   fs::remove_all(test_dir);
 }
@@ -929,8 +983,9 @@ TEST_F(LifecycleNodeTest, StartupPublishesColdStartWhenStateMissing)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
     return !last_recovery_payload.empty();
@@ -939,7 +994,7 @@ TEST_F(LifecycleNodeTest, StartupPublishesColdStartWhenStateMissing)
   EXPECT_NE(last_recovery_payload.find("mode=cold_start"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)recovery_sub;
   fs::remove_all(test_dir);
 }
@@ -984,8 +1039,9 @@ TEST_F(LifecycleNodeTest, StartupPublishesColdStartWhenPrimaryAndBackupBothCorru
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
     return !last_recovery_payload.empty();
@@ -994,7 +1050,7 @@ TEST_F(LifecycleNodeTest, StartupPublishesColdStartWhenPrimaryAndBackupBothCorru
   EXPECT_NE(last_recovery_payload.find("mode=cold_start"), std::string::npos);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)recovery_sub;
   fs::remove_all(test_dir);
 }
@@ -1038,8 +1094,9 @@ TEST_F(LifecycleNodeTest, StartupRecoveryLatencyIsWithinTwoSeconds)
     });
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(lifecycle_node);
+  executor.add_node(lifecycle_node->get_node_base_interface());
   executor.add_node(io_node);
+  ASSERT_TRUE(activateLifecycleNode(executor, lifecycle_node));
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(800), [&]() {
     return !last_recovery_payload.empty();
@@ -1050,7 +1107,7 @@ TEST_F(LifecycleNodeTest, StartupRecoveryLatencyIsWithinTwoSeconds)
   EXPECT_LT(std::stoll(total_ms_value), 2000);
 
   executor.remove_node(io_node);
-  executor.remove_node(lifecycle_node);
+  executor.remove_node(lifecycle_node->get_node_base_interface());
   (void)recovery_sub;
   fs::remove_all(test_dir);
 }

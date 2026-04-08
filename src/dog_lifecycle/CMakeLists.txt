@@ -7,6 +7,8 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -21,6 +23,8 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
 )
 ament_target_dependencies(${PROJECT_NAME}_lib
   rclcpp
+  rclcpp_lifecycle
+  lifecycle_msgs
   std_msgs
   dog_interfaces
 )
@@ -50,7 +54,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_lifecycle_node test/test_lifecycle_node.cpp)
   if(TARGET test_lifecycle_node)
     target_link_libraries(test_lifecycle_node ${PROJECT_NAME}_lib)
-    ament_target_dependencies(test_lifecycle_node rclcpp std_msgs dog_interfaces)
+    ament_target_dependencies(test_lifecycle_node rclcpp rclcpp_lifecycle lifecycle_msgs std_msgs dog_interfaces)
   endif()
 
   ament_add_gtest(test_yaml_state_store test/test_yaml_state_store.cpp)
