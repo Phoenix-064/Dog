@@ -1,5 +1,7 @@
 #include "dog_behavior/behavior_node.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 #include <cmath>
 #include <cctype>
 #include <chrono>
@@ -57,6 +59,12 @@ std::string percentDecode(const std::string & value)
   return decoded;
 }
 
+std::string getBehaviorTreeXmlPath()
+{
+  const auto package_share = ament_index_cpp::get_package_share_directory("dog_behavior");
+  return package_share + "/config/execute_trigger_tree.xml";
+}
+
 }  // namespace
 
 BehaviorNode::BehaviorNode()
@@ -73,6 +81,12 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 , cancel_due_to_idle_spinning_(false)
 , idle_spinning_mode_active_(false)
 , has_latest_pose_(false)
+, behavior_tree_(
+    [this](const std::string & behavior_name) {
+      return this->triggerExecuteBehavior(behavior_name);
+    },
+    []() {},
+    getBehaviorTreeXmlPath())
 {
   const auto global_pose_topic = declare_parameter<std::string>("global_pose_topic", "/dog/global_pose");
   const auto localization_topic = declare_parameter<std::string>("localization_topic", "/localization/dog");
@@ -230,10 +244,10 @@ void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr ms
 
 void BehaviorNode::executeTriggerCallback(const std_msgs::msg::String::ConstSharedPtr msg)
 {
-  if (!triggerExecuteBehavior(msg->data)) {
+  if (!behavior_tree_.execute(msg->data)) {
     RCLCPP_WARN(
       get_logger(),
-      "Failed to trigger execute behavior action from topic=%s behavior_name=%s",
+      "Failed to execute behavior tree from topic=%s behavior_name=%s",
       execute_behavior_trigger_topic_.c_str(),
       msg->data.c_str());
   }

@@ -1,0 +1,8 @@
+<root main_tree_to_execute="ExecuteTriggerTree">
+  <BehaviorTree ID="ExecuteTriggerTree">
+    <Sequence>
+      <TriggerExecuteBehavior behavior_name="{behavior_name}"/>
+      <PlaceholderBehavior/>
+    </Sequence>
+  </BehaviorTree>
+</root>

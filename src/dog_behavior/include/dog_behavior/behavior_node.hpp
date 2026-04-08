@@ -2,6 +2,7 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <dog_behavior/behavior_tree.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <dog_interfaces/action/execute_behavior.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -142,6 +143,7 @@ private:
   rclcpp::TimerBase::SharedPtr feedback_watchdog_timer_;
   rclcpp_action::Client<ExecuteBehavior>::SharedPtr execute_behavior_client_;
   ExecuteBehaviorGoalHandle::SharedPtr active_goal_handle_;
+  BehaviorTree behavior_tree_;
 };
 
 }  // namespace dog_behavior
