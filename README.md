@@ -52,7 +52,6 @@ ros2 launch dog_behavior launch.py
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-cd /home/ncu/wyr/Dog
 source install/setup.bash
 
 # 终端 1
@@ -139,7 +138,6 @@ flowchart LR
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-cd /home/ncu/wyr/Dog
 colcon build --packages-select dog_interfaces dog_perception dog_lifecycle dog_behavior
 source install/setup.bash
 ~~~
@@ -148,7 +146,6 @@ source install/setup.bash
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-cd /home/ncu/wyr/Dog
 colcon test --packages-select dog_perception
 colcon test-result --all --verbose
 ~~~
@@ -157,7 +154,6 @@ colcon test-result --all --verbose
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-cd /home/ncu/wyr/Dog
 colcon test
 colcon test-result --all --verbose
 ~~~
