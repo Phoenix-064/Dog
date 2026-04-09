@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(dog_lifecycle)
 
+# colcon uses per-package build directories, so export compile commands here.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands for IDE tooling" FORCE)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
