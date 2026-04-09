@@ -297,7 +297,6 @@ void NavigationExecutorNode::nav2FeedbackCallback(
 void NavigationExecutorNode::nav2ResultCallback(const NavigateGoalHandleClient::WrappedResult & result)
 {
   std::shared_ptr<NavigateGoalHandleServer> internal_goal_handle;
-  ExecutionState final_state = ExecutionState::kFailed;
   bool timeout_terminal = false;
   bool canceled_by_idle = false;
 
@@ -314,31 +313,10 @@ void NavigationExecutorNode::nav2ResultCallback(const NavigateGoalHandleClient::
     active_internal_goal_request_.reset();
     active_internal_goal_handle_.reset();
     active_nav2_goal_handle_.reset();
-
-    switch (result.code) {
-      case rclcpp_action::ResultCode::SUCCEEDED:
-        execution_state_ = ExecutionState::kSucceeded;
-        final_state = ExecutionState::kSucceeded;
-        break;
-      case rclcpp_action::ResultCode::CANCELED:
-        if (canceled_by_idle) {
-          execution_state_ = ExecutionState::kIdle;
-          final_state = ExecutionState::kIdle;
-        } else if (timeout_terminal) {
-          execution_state_ = ExecutionState::kTimeout;
-          final_state = ExecutionState::kTimeout;
-        } else {
-          execution_state_ = ExecutionState::kFailed;
-          final_state = ExecutionState::kFailed;
-        }
-        break;
-      case rclcpp_action::ResultCode::ABORTED:
-      default:
-        execution_state_ = ExecutionState::kFailed;
-        final_state = ExecutionState::kFailed;
-        break;
-    }
+    execution_state_ = mapNav2ResultState(result.code, timeout_terminal, canceled_by_idle);
   }
+
+  const auto final_state = mapNav2ResultState(result.code, timeout_terminal, canceled_by_idle);
 
   publishExecutionState(final_state);
 
@@ -357,6 +335,28 @@ void NavigationExecutorNode::nav2ResultCallback(const NavigateGoalHandleClient::
     internal_goal_handle->canceled(internal_result);
   } else {
     internal_goal_handle->abort(internal_result);
+  }
+}
+
+NavigationExecutorNode::ExecutionState NavigationExecutorNode::mapNav2ResultState(
+  const rclcpp_action::ResultCode result_code,
+  const bool timeout_terminal,
+  const bool canceled_by_idle) const
+{
+  switch (result_code) {
+    case rclcpp_action::ResultCode::SUCCEEDED:
+      return ExecutionState::kSucceeded;
+    case rclcpp_action::ResultCode::CANCELED:
+      if (canceled_by_idle) {
+        return ExecutionState::kIdle;
+      }
+      if (timeout_terminal) {
+        return ExecutionState::kTimeout;
+      }
+      return ExecutionState::kFailed;
+    case rclcpp_action::ResultCode::ABORTED:
+    default:
+      return ExecutionState::kFailed;
   }
 }
 
@@ -489,7 +489,7 @@ void NavigationExecutorNode::systemModeCallback(const std_msgs::msg::String::Con
 
   if (internal_goal_handle && internal_goal_handle->is_active()) {
     auto result = std::make_shared<NavigateToPose::Result>();
-    internal_goal_handle->canceled(result);
+    internal_goal_handle->abort(result);
   }
 
   RCLCPP_WARN(get_logger(), "system_mode_updated mode=%s payload=%s", mode.c_str(), msg->data.c_str());

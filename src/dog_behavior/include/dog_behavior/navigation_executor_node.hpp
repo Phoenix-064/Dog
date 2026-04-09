@@ -59,6 +59,10 @@ private:
   bool isCompletedState(const std::string & target_state) const;
   bool isFinitePose(const geometry_msgs::msg::PoseStamped & pose) const;
   bool hasValidQuaternionNorm(const geometry_msgs::msg::PoseStamped & pose) const;
+  ExecutionState mapNav2ResultState(
+    rclcpp_action::ResultCode result_code,
+    bool timeout_terminal,
+    bool canceled_by_idle) const;
   void publishExecutionState(ExecutionState state);
   std::string executionStateToString(ExecutionState state) const;
 

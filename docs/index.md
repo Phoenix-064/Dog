@@ -10,3 +10,4 @@
 7. [dog_lifecycle AI 开发查询文档](dog-lifecycle-ai-reference.md)
 8. [dog_behavior AI 开发查询文档](dog-behavior-ai-reference.md)
 9. [dog_perception AI 开发查询文档](dog-perception-ai-reference.md)
+10. [Behavior 与 Nav2 Action 映射规范](behavior-nav2-action-mapping-spec.md)
