@@ -10,10 +10,12 @@ namespace dog_behavior
 
 BehaviorTree::BehaviorTree(
   ActionCallback action_callback,
+  NavigateActionCallback navigate_action_callback,
   PlaceholderCallback placeholder_callback,
   std::string tree_xml_file_path)
 : tree_xml_file_path_(std::move(tree_xml_file_path))
 , action_callback_(std::move(action_callback))
+, navigate_action_callback_(std::move(navigate_action_callback))
 , placeholder_callback_(std::move(placeholder_callback))
 {
   factory_.registerSimpleAction(
@@ -29,6 +31,23 @@ BehaviorTree::BehaviorTree(
       }
 
       return action_callback_(behavior_name.value()) ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+    },
+    {BT::InputPort<std::string>("behavior_name")});
+
+  factory_.registerSimpleAction(
+    "TriggerNavigateGoal",
+    [this](BT::TreeNode & node) {
+      if (!navigate_action_callback_) {
+        return BT::NodeStatus::FAILURE;
+      }
+
+      const auto behavior_name = node.getInput<std::string>("behavior_name");
+      if (!behavior_name) {
+        return BT::NodeStatus::FAILURE;
+      }
+
+      return navigate_action_callback_(behavior_name.value()) ?
+        BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
     },
     {BT::InputPort<std::string>("behavior_name")});
 

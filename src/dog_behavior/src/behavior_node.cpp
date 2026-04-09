@@ -78,12 +78,18 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
 , action_server_ready_(false)
 , action_goal_pending_(false)
 , action_goal_active_(false)
+, navigate_goal_pending_(false)
+, navigate_goal_active_(false)
+, navigate_server_ready_(false)
 , cancel_due_to_idle_spinning_(false)
 , idle_spinning_mode_active_(false)
 , has_latest_pose_(false)
 , behavior_tree_(
     [this](const std::string & behavior_name) {
       return this->triggerExecuteBehavior(behavior_name);
+    },
+    [this](const std::string & behavior_name) {
+      return this->triggerNavigateGoal(behavior_name);
     },
     []() {},
     getBehaviorTreeXmlPath())
@@ -97,6 +103,9 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
   execute_behavior_trigger_topic_ = declare_parameter<std::string>(
     "execute_behavior_trigger_topic",
     "/behavior/execute_trigger");
+  navigate_execute_action_name_ = declare_parameter<std::string>(
+    "navigate_execute_action_name",
+    "/behavior/navigate_execute");
   recovery_context_topic_ = declare_parameter<std::string>(
     "recovery_context_topic",
     "/lifecycle/recovery_context");
@@ -138,6 +147,9 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
   execute_behavior_client_ = rclcpp_action::create_client<ExecuteBehavior>(
     this,
     execute_behavior_action_name_);
+  navigate_client_ = rclcpp_action::create_client<NavigateToPose>(
+    this,
+    navigate_execute_action_name_);
 
   execute_trigger_sub_ = create_subscription<std_msgs::msg::String>(
     execute_behavior_trigger_topic_,
@@ -161,15 +173,51 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
     std::lock_guard<std::mutex> lock(state_mutex_);
     execution_state_ = ExecutionState::kWaitingServer;
     action_server_wait_start_time_ = now();
+    navigate_server_wait_start_time_ = now();
   }
 
   action_server_wait_timer_ = create_wall_timer(
     std::chrono::milliseconds(200),
     std::bind(&BehaviorNode::actionServerWaitTimerCallback, this));
+  navigate_server_wait_timer_ = create_wall_timer(
+    std::chrono::milliseconds(200),
+    [this]() {
+      if (navigate_client_->wait_for_action_server(std::chrono::seconds(0))) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        navigate_server_ready_ = true;
+        navigate_server_wait_timer_.reset();
+      }
+    });
 
   feedback_watchdog_timer_ = create_wall_timer(
     std::chrono::milliseconds(200),
     std::bind(&BehaviorNode::feedbackWatchdogTimerCallback, this));
+  navigate_feedback_watchdog_timer_ = create_wall_timer(
+    std::chrono::milliseconds(200),
+    [this]() {
+      NavigateGoalHandle::SharedPtr goal_handle_to_cancel;
+      {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!navigate_goal_active_) {
+          return;
+        }
+
+        const double feedback_elapsed_sec = (now() - navigate_last_feedback_time_).seconds();
+        if (feedback_elapsed_sec <= feedback_timeout_sec_) {
+          return;
+        }
+
+        execution_state_ = ExecutionState::kTimeout;
+        navigate_goal_active_ = false;
+        navigate_goal_pending_ = false;
+        goal_handle_to_cancel = active_navigate_goal_handle_;
+        active_navigate_goal_handle_.reset();
+      }
+
+      if (goal_handle_to_cancel) {
+        navigate_client_->async_cancel_goal(goal_handle_to_cancel);
+      }
+    });
 
   RCLCPP_INFO(
     get_logger(),
@@ -181,6 +229,57 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
     execute_behavior_trigger_topic_.c_str(),
     recovery_context_topic_.c_str(),
     system_mode_topic_.c_str());
+}
+
+bool BehaviorNode::triggerNavigateGoal(const std::string & behavior_name)
+{
+  (void)behavior_name;
+
+  NavigateToPose::Goal goal;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (idle_spinning_mode_active_) {
+      RCLCPP_WARN(get_logger(), "skip navigate goal during idle_spinning mode");
+      return false;
+    }
+
+    if (!navigate_server_ready_) {
+      RCLCPP_WARN(get_logger(), "Cannot send navigate goal because navigation executor is unavailable");
+      return false;
+    }
+
+    if (navigate_goal_pending_ || navigate_goal_active_) {
+      RCLCPP_WARN(get_logger(), "Cannot send navigate goal because one goal is in-flight");
+      return false;
+    }
+
+    if (!has_latest_pose_) {
+      RCLCPP_WARN(get_logger(), "Cannot send navigate goal because latest pose is unavailable");
+      return false;
+    }
+
+    goal.pose = latest_pose_;
+    navigate_goal_pending_ = true;
+    execution_state_ = ExecutionState::kSendingGoal;
+  }
+
+  rclcpp_action::Client<NavigateToPose>::SendGoalOptions send_goal_options;
+  send_goal_options.goal_response_callback =
+    [this](NavigateGoalHandle::SharedPtr goal_handle) {
+      this->navigateGoalResponseCallback(goal_handle);
+    };
+  send_goal_options.feedback_callback =
+    std::bind(&BehaviorNode::navigateFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+  send_goal_options.result_callback =
+    std::bind(&BehaviorNode::navigateResultCallback, this, std::placeholders::_1);
+
+  navigate_client_->async_send_goal(goal, send_goal_options);
+  RCLCPP_INFO(
+    get_logger(),
+    "Sent navigate goal to internal executor: action_name=%s frame_id=%s",
+    navigate_execute_action_name_.c_str(),
+    goal.pose.header.frame_id.c_str());
+  return true;
 }
 
 void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -306,6 +405,7 @@ void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPt
 
   const bool is_idle_spinning = (mode == "idle_spinning" || mode == "degraded");
   ExecuteBehaviorGoalHandle::SharedPtr goal_handle_to_cancel;
+  NavigateGoalHandle::SharedPtr navigate_goal_handle_to_cancel;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (idle_spinning_mode_active_ == is_idle_spinning) {
@@ -321,10 +421,21 @@ void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPt
       active_goal_handle_.reset();
       execution_state_ = ExecutionState::kIdle;
     }
+
+    if (is_idle_spinning && navigate_goal_active_ && active_navigate_goal_handle_) {
+      navigate_goal_handle_to_cancel = active_navigate_goal_handle_;
+      navigate_goal_active_ = false;
+      navigate_goal_pending_ = false;
+      active_navigate_goal_handle_.reset();
+      execution_state_ = ExecutionState::kIdle;
+    }
   }
 
   if (goal_handle_to_cancel) {
     execute_behavior_client_->async_cancel_goal(goal_handle_to_cancel);
+  }
+  if (navigate_goal_handle_to_cancel) {
+    navigate_client_->async_cancel_goal(navigate_goal_handle_to_cancel);
   }
 
   RCLCPP_WARN(
@@ -332,6 +443,58 @@ void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPt
     "system_mode_updated mode=%s payload=%s",
     mode.c_str(),
     msg->data.c_str());
+}
+
+void BehaviorNode::navigateGoalResponseCallback(NavigateGoalHandle::SharedPtr goal_handle)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (!goal_handle) {
+    execution_state_ = ExecutionState::kRejected;
+    navigate_goal_pending_ = false;
+    navigate_goal_active_ = false;
+    RCLCPP_ERROR(get_logger(), "Navigate goal rejected: action_name=%s", navigate_execute_action_name_.c_str());
+    return;
+  }
+
+  active_navigate_goal_handle_ = goal_handle;
+  navigate_goal_pending_ = false;
+  navigate_goal_active_ = true;
+  navigate_last_feedback_time_ = now();
+  execution_state_ = ExecutionState::kRunning;
+  RCLCPP_INFO(get_logger(), "Navigate goal accepted: action_name=%s", navigate_execute_action_name_.c_str());
+}
+
+void BehaviorNode::navigateFeedbackCallback(
+  NavigateGoalHandle::SharedPtr,
+  const std::shared_ptr<const NavigateToPose::Feedback>)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (!navigate_goal_active_) {
+    return;
+  }
+
+  navigate_last_feedback_time_ = now();
+}
+
+void BehaviorNode::navigateResultCallback(const NavigateGoalHandle::WrappedResult & result)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  navigate_goal_pending_ = false;
+  navigate_goal_active_ = false;
+  active_navigate_goal_handle_.reset();
+
+  switch (result.code) {
+    case rclcpp_action::ResultCode::SUCCEEDED:
+      execution_state_ = ExecutionState::kSucceeded;
+      break;
+    case rclcpp_action::ResultCode::CANCELED:
+      execution_state_ = ExecutionState::kFailed;
+      break;
+    case rclcpp_action::ResultCode::ABORTED:
+    default:
+      execution_state_ = ExecutionState::kFailed;
+      break;
+  }
 }
 
 void BehaviorNode::actionServerWaitTimerCallback()

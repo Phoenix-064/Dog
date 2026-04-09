@@ -12,10 +12,12 @@ class BehaviorTree
 {
 public:
   using ActionCallback = std::function<bool(const std::string & behavior_name)>;
+  using NavigateActionCallback = std::function<bool(const std::string & behavior_name)>;
   using PlaceholderCallback = std::function<void()>;
 
   explicit BehaviorTree(
     ActionCallback action_callback,
+    NavigateActionCallback navigate_action_callback,
     PlaceholderCallback placeholder_callback,
     std::string tree_xml_file_path);
 
@@ -28,6 +30,7 @@ private:
   BT::BehaviorTreeFactory factory_;
   std::string tree_xml_file_path_;
   ActionCallback action_callback_;
+  NavigateActionCallback navigate_action_callback_;
   PlaceholderCallback placeholder_callback_;
 };
 

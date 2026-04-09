@@ -111,6 +111,13 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
+    navigation_executor_node = Node(
+        package="dog_behavior",
+        executable="dog_behavior_navigation_executor_node",
+        name="dog_navigation_executor",
+        output="screen",
+    )
+
     return LaunchDescription([
         declare_use_livox,
         declare_livox_model,
@@ -122,4 +129,5 @@ def generate_launch_description() -> LaunchDescription:
         perception_camera_node,
         lifecycle_node,
         behavior_node,
+        navigation_executor_node,
     ])

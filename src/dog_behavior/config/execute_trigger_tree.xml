@@ -2,6 +2,7 @@
   <BehaviorTree ID="ExecuteTriggerTree">
     <Sequence>
       <TriggerExecuteBehavior behavior_name="{behavior_name}"/>
+      <TriggerNavigateGoal behavior_name="{behavior_name}"/>
       <PlaceholderBehavior/>
     </Sequence>
   </BehaviorTree>

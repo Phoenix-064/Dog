@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
@@ -18,6 +19,7 @@ find_package(dog_interfaces REQUIRED)
 add_library(${PROJECT_NAME}_lib
   src/behavior_node.cpp
   src/behavior_tree.cpp
+  src/navigation_executor_node.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -29,6 +31,7 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   ament_index_cpp
   behaviortree_cpp_v3
   nav_msgs
+  nav2_msgs
   geometry_msgs
   std_msgs
   dog_interfaces
@@ -37,9 +40,13 @@ ament_target_dependencies(${PROJECT_NAME}_lib
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
 
+add_executable(${PROJECT_NAME}_navigation_executor_node src/navigation_executor_main.cpp)
+target_link_libraries(${PROJECT_NAME}_navigation_executor_node ${PROJECT_NAME}_lib)
+
 install(TARGETS
   ${PROJECT_NAME}_lib
   ${PROJECT_NAME}_node
+  ${PROJECT_NAME}_navigation_executor_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -78,8 +85,20 @@ if(BUILD_TESTING)
       rclcpp_action
       geometry_msgs
       nav_msgs
+      nav2_msgs
       std_msgs
       dog_interfaces
+    )
+  endif()
+
+  ament_add_gtest(test_navigation_executor_node test/test_navigation_executor_node.cpp)
+  if(TARGET test_navigation_executor_node)
+    target_link_libraries(test_navigation_executor_node ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_navigation_executor_node
+      rclcpp
+      rclcpp_action
+      nav2_msgs
+      std_msgs
     )
   endif()
 endif()

@@ -4,6 +4,7 @@
 #include <geometry_msgs/msg/pose.hpp>
 #include <dog_behavior/behavior_tree.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <dog_interfaces/action/execute_behavior.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -28,6 +29,10 @@ public:
   /// @param behavior_name 转发给动作服务端的行为标识。
   /// @return 当目标请求被接受并可发送时返回 true。
   bool triggerExecuteBehavior(const std::string & behavior_name);
+  /// @brief 使用最新缓存位姿触发内部导航执行动作目标。
+  /// @param behavior_name 触发导航行为时携带的语义标识。
+  /// @return 当导航目标请求被接受并可发送时返回 true。
+  bool triggerNavigateGoal(const std::string & behavior_name);
   /// @brief 以字符串标记获取当前执行状态。
   /// @return 小写的执行状态文本。
   std::string getExecutionState() const;
@@ -42,6 +47,8 @@ public:
 private:
   using ExecuteBehavior = dog_interfaces::action::ExecuteBehavior;
   using ExecuteBehaviorGoalHandle = rclcpp_action::ClientGoalHandle<ExecuteBehavior>;
+  using NavigateToPose = nav2_msgs::action::NavigateToPose;
+  using NavigateGoalHandle = rclcpp_action::ClientGoalHandle<NavigateToPose>;
 
   enum class ExecutionState
   {
@@ -84,6 +91,18 @@ private:
   /// @brief 处理动作终态结果并更新执行状态。
   /// @param result 封装后的动作结果。
   void resultCallback(const ExecuteBehaviorGoalHandle::WrappedResult & result);
+  /// @brief 处理导航动作目标的接受或拒绝响应。
+  /// @param goal_handle 导航动作客户端返回的目标句柄。
+  void navigateGoalResponseCallback(NavigateGoalHandle::SharedPtr goal_handle);
+  /// @brief 跟踪导航动作反馈并刷新看门狗时间戳。
+  /// @param goal_handle 与反馈关联的目标句柄。
+  /// @param feedback 导航动作反馈负载。
+  void navigateFeedbackCallback(
+    NavigateGoalHandle::SharedPtr goal_handle,
+    const std::shared_ptr<const NavigateToPose::Feedback> feedback);
+  /// @brief 处理导航动作终态结果并更新执行状态。
+  /// @param result 导航动作封装结果。
+  void navigateResultCallback(const NavigateGoalHandle::WrappedResult & result);
   /// @brief 检查当前内部状态是否允许发送新目标。
   /// @return 当动作服务端就绪且无在途目标时返回 true。
   bool canSendGoalLocked() const;
@@ -115,6 +134,7 @@ private:
 
   std::string default_frame_id_;
   std::string execute_behavior_action_name_;
+  std::string navigate_execute_action_name_;
   std::string execute_behavior_trigger_topic_;
   std::string recovery_context_topic_;
   std::string system_mode_topic_;
@@ -126,13 +146,18 @@ private:
   bool action_server_ready_;
   bool action_goal_pending_;
   bool action_goal_active_;
+  bool navigate_goal_pending_;
+  bool navigate_goal_active_;
+  bool navigate_server_ready_;
   bool cancel_due_to_idle_spinning_;
   bool idle_spinning_mode_active_;
   bool has_latest_pose_;
   std::unordered_set<std::string> recovered_completed_task_phases_;
   geometry_msgs::msg::PoseStamped latest_pose_;
   rclcpp::Time action_server_wait_start_time_;
+  rclcpp::Time navigate_server_wait_start_time_;
   rclcpp::Time last_feedback_time_;
+  rclcpp::Time navigate_last_feedback_time_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr execute_trigger_sub_;
@@ -140,9 +165,13 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr system_mode_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr global_pose_pub_;
   rclcpp::TimerBase::SharedPtr action_server_wait_timer_;
+  rclcpp::TimerBase::SharedPtr navigate_server_wait_timer_;
   rclcpp::TimerBase::SharedPtr feedback_watchdog_timer_;
+  rclcpp::TimerBase::SharedPtr navigate_feedback_watchdog_timer_;
   rclcpp_action::Client<ExecuteBehavior>::SharedPtr execute_behavior_client_;
+  rclcpp_action::Client<NavigateToPose>::SharedPtr navigate_client_;
   ExecuteBehaviorGoalHandle::SharedPtr active_goal_handle_;
+  NavigateGoalHandle::SharedPtr active_navigate_goal_handle_;
   BehaviorTree behavior_tree_;
 };
 

@@ -45,7 +45,7 @@ ros2 launch dog_behavior launch.py
 
 说明：
 - 启动入口位于 src/dog_behavior/launch/launch.py。
-- 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_node。
+- 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_node、dog_navigation_executor_node。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
 
 ### 3.3 分终端启动（用于调试）
@@ -62,6 +62,9 @@ ros2 run dog_lifecycle dog_lifecycle_node
 
 # 终端 3
 ros2 run dog_behavior dog_behavior_node
+
+# 终端 4
+ros2 run dog_behavior dog_behavior_navigation_executor_node
 ~~~
 
 ## 4. 启动参数速查
@@ -129,7 +132,10 @@ flowchart LR
   E --> G["/lifecycle/health_alarm"]
   F --> H[dog_behavior]
   H --> I["/dog/global_pose"]
-  H --> J[ExecuteBehavior Action]
+  H --> J["/behavior/navigate_execute"]
+  J --> K[dog_navigation_executor]
+  K --> L["/navigate_to_pose"]
+  K --> M["/behavior/nav_exec_state"]
 ~~~
 
 ## 8. 开发与测试

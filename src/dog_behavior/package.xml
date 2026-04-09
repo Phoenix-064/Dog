@@ -13,6 +13,7 @@
   <depend>ament_index_cpp</depend>
   <depend>behaviortree_cpp_v3</depend>
   <depend>nav_msgs</depend>
+  <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>dog_interfaces</depend>

@@ -7,6 +7,11 @@
 3. **Localization** (定位模块)
 4. **point_lio** (基于点云的里程计与定位)
 
+新增行为导航分层：
+
+5. **dog_behavior** (行为编排)
+6. **dog_navigation_executor** (独立导航执行代理，负责转发到 Nav2)
+
 ## 通信协议
 本项目的主要部件运行在一个 ROS 2 Humble 运行时网络中，遵循发布-订阅 (Publish-Subscribe) 模型。
 
@@ -15,9 +20,17 @@
 2. **point_lio** 或 **Localization** 订阅点云主题结合特征提取给出高精度的里程计算法与定位姿态。
 3. **Detect** 会订阅相机和（或）雷达融合后的数据来进行目标分类与检测，并将结果发送出去。
 4. 所有最终的定位姿态和相对目标状态，通过 ROS 2 发送到**运动控制项目模块**，进行四足机器狗的联合控制。
+5. `dog_behavior` 通过内部 action `/behavior/navigate_execute` 下发导航目标给 `dog_navigation_executor`。
+6. `dog_navigation_executor` 将目标代理到 Nav2 action `/navigate_to_pose`，并将执行状态发布到 `/behavior/nav_exec_state`。
 
 ## 集成接口详情
 - **类型**: ROS Topic 通信。
 - **频次**: 典型为 10Hz - 100Hz 之间以适用实时要求。
 - **协议**: 自定义 ROS Message。
+
+### 行为-导航内部代理接口
+
+- `dog_behavior` -> `dog_navigation_executor`: `nav2_msgs/action/NavigateToPose`
+- `dog_navigation_executor` -> Nav2: `nav2_msgs/action/NavigateToPose`
+- `dog_navigation_executor` -> 状态观测: `/behavior/nav_exec_state` (`std_msgs/msg/String`)
 

@@ -24,6 +24,9 @@ TEST_F(BehaviorTreeTest, ExecutesActionLeafThenPlaceholderLeaf)
       visit_order.push_back("action:" + behavior_name);
       return true;
     },
+    [](const std::string &) {
+      return true;
+    },
     [&visit_order, &placeholder_call_count]() {
       ++placeholder_call_count;
       visit_order.push_back("placeholder");
@@ -50,6 +53,9 @@ TEST_F(BehaviorTreeTest, SkipsPlaceholderLeafWhenActionLeafFails)
       visit_order.push_back("action:" + behavior_name);
       return false;
     },
+    [](const std::string &) {
+      return true;
+    },
     [&visit_order, &placeholder_call_count]() {
       ++placeholder_call_count;
       visit_order.push_back("placeholder");
@@ -71,6 +77,9 @@ TEST_F(BehaviorTreeTest, PropagatesEmptyBehaviorNameToActionLeaf)
   dog_behavior::BehaviorTree tree(
     [&captured_behavior_name](const std::string & behavior_name) {
       captured_behavior_name = behavior_name;
+      return true;
+    },
+    [](const std::string &) {
       return true;
     },
     [&placeholder_call_count]() {
