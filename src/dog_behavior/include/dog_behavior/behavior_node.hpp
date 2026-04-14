@@ -12,9 +12,18 @@
 
 #include <mutex>
 #include <unordered_set>
+#include <vector>
 
 namespace dog_behavior
 {
+
+struct Waypoint {
+  std::string name;
+  double x;
+  double y;
+  double z;
+  double yaw;
+};
 
 class BehaviorNode : public rclcpp::Node
 {
@@ -132,6 +141,15 @@ private:
   /// @return 当四元数模长在允许范围内时返回 true。
   bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
 
+  /// @brief 从 YAML 文件加载预设航点列表。
+  /// @param file_path 航点 YAML 文件的绝对路径。
+  void loadWaypoints(const std::string & file_path);
+
+  /// @brief 将航点转换为 PoseStamped 消息。
+  /// @param wp 待转换的航点。
+  /// @return 包含位置和朝向的 PoseStamped。
+  geometry_msgs::msg::PoseStamped waypointToPoseStamped(const Waypoint & wp) const;
+
   std::string default_frame_id_;
   std::string execute_behavior_action_name_;
   std::string navigate_execute_action_name_;
@@ -158,6 +176,10 @@ private:
   rclcpp::Time navigate_server_wait_start_time_;
   rclcpp::Time last_feedback_time_;
   rclcpp::Time navigate_last_feedback_time_;
+
+  std::string match_type_;
+  std::vector<Waypoint> waypoints_;
+  size_t current_waypoint_index_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr execute_trigger_sub_;

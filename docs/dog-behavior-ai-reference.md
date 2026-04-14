@@ -30,6 +30,12 @@
 2. [src/dog_behavior/src/navigation_executor_main.cpp](../src/dog_behavior/src/navigation_executor_main.cpp)
 3. [src/dog_behavior/launch/launch.py](../src/dog_behavior/launch/launch.py)
 
+配置文件：
+
+1. [src/dog_behavior/config/execute_trigger_tree.xml](../src/dog_behavior/config/execute_trigger_tree.xml)
+2. [src/dog_behavior/config/waypoints_left.yaml](../src/dog_behavior/config/waypoints_left.yaml)
+3. [src/dog_behavior/config/waypoints_right.yaml](../src/dog_behavior/config/waypoints_right.yaml)
+
 构建与依赖：
 
 1. [src/dog_behavior/CMakeLists.txt](../src/dog_behavior/CMakeLists.txt)
@@ -105,9 +111,18 @@ flowchart TD
 1. 非 `idle_spinning/degraded` 模式。
 2. `navigate_execute` action server 已就绪。
 3. 无在途导航目标。
-4. `latest_pose_` 可用。
+4. 以下任一条件成立：
+   - `waypoints_` 非空（将使用预设航点作为目标）。
+   - `waypoints_` 为空且 `latest_pose_` 可用（向后兼容模式）。
 
-### 3.3 反馈看门狗
+### 3.3 航点加载与使用
+
+1. **航点加载**：节点启动时通过 `waypoints_file` 参数加载 YAML 格式的航点文件，使用 `yaml-cpp` 解析。
+2. **航点查找**：`triggerNavigateGoal` 根据 `behavior_name` 在 `waypoints_` 中查找同名航点；若未找到且航点列表非空，则按 `current_waypoint_index_` 顺序取用。
+3. **目标转换**：`waypointToPoseStamped` 将航点结构体转换为 `PoseStamped`，其中 `yaw` 转换为绕 Z 轴的四元数。
+4. **向后兼容**：若 `waypoints_` 为空，则回退到使用 `latest_pose_` 作为导航目标。
+
+### 3.4 反馈看门狗
 
 1. 行为动作看门狗：`feedbackWatchdogTimerCallback`。
 2. 导航动作看门狗：`navigate_feedback_watchdog_timer_` lambda。
@@ -116,7 +131,7 @@ flowchart TD
   2. 清理本地活动句柄。
   3. 异步 cancel 对应 action goal。
 
-### 3.4 可查询接口
+### 3.5 可查询接口
 
 1. `getExecutionState()`：返回当前状态字符串。
 2. `IsTaskPhaseRecoveredForTest()`：测试辅助，查询任务阶段是否被恢复过滤。
@@ -262,8 +277,10 @@ Topic 发布：
 6. `navigate_execute_action_name`：`/behavior/navigate_execute`
 7. `recovery_context_topic`：`/lifecycle/recovery_context`
 8. `system_mode_topic`：`/lifecycle/system_mode`
-9. `action_server_wait_timeout_sec`：`5.0`（`<=0` 回退 `5.0`）
-10. `feedback_timeout_sec`：`2.0`（`<=0` 回退 `2.0`）
+9. `match_type`：`left`（比赛类型，决定加载 `waypoints_left.yaml` 或 `waypoints_right.yaml`）
+10. `waypoints_file`：`""`（航点 YAML 文件的绝对路径，由 launch 文件根据 `match_type` 自动填充）
+11. `action_server_wait_timeout_sec`：`5.0`（`<=0` 回退 `5.0`）
+12. `feedback_timeout_sec`：`2.0`（`<=0` 回退 `2.0`）
 
 ### 8.2 NavigationExecutorNode 参数
 
@@ -390,6 +407,10 @@ Topic 发布：
 
 启动编排见：[src/dog_behavior/launch/launch.py](../src/dog_behavior/launch/launch.py)
 
+**启动参数**：
+- `match_type`（默认 `left`，可选 `left`/`right`）：比赛类型，决定加载 `waypoints_left.yaml` 或 `waypoints_right.yaml` 航点文件。
+
+**节点启动**：
 1. 启动 `dog_behavior_node`，节点名 `dog_behavior`。
 2. 启动 `dog_behavior_navigation_executor_node`，节点名 `dog_navigation_executor`。
 3. 与 `dog_perception`、`dog_lifecycle` 一同纳入统一 launch。
@@ -404,6 +425,7 @@ Topic 发布：
 4. navigation_executor mapNav2ResultState canceled idle timeout failed
 5. behavior_tree TriggerExecuteBehavior TriggerNavigateGoal xml sequence
 6. dog_behavior launch behavior_node navigation_executor_node executable mapping
+7. behavior_node match_type waypoints_file loadWaypoints yaml-cpp navigation target selection
 
 可用于影响分析的核心入口：
 

@@ -71,3 +71,6 @@ frames_*.pdf
 
 # YOLO models
 *.pt
+
+# Cache
+.cache/

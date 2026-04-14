@@ -1,3 +1,4 @@
+import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
@@ -44,6 +45,25 @@ def _create_optional_third_party_actions(context, *args, **kwargs):
     return actions
 
 
+def _create_behavior_node(context, *args, **kwargs):
+    match_type = LaunchConfiguration("match_type").perform(context)
+    pkg_share = get_package_share_directory("dog_behavior")
+    waypoints_file = os.path.join(pkg_share, "config", f"waypoints_{match_type}.yaml")
+
+    return [
+        Node(
+            package="dog_behavior",
+            executable="dog_behavior_node",
+            name="dog_behavior",
+            output="screen",
+            parameters=[{
+                "match_type": match_type,
+                "waypoints_file": waypoints_file,
+            }],
+        ),
+    ]
+
+
 def generate_launch_description() -> LaunchDescription:
     # Bring up all first-party and third-party runtime components from one entrypoint.
     use_point_lio_rviz = LaunchConfiguration("use_point_lio_rviz")
@@ -80,6 +100,13 @@ def generate_launch_description() -> LaunchDescription:
         description="Whether to start dog_perception_camera_node.",
     )
 
+    declare_match_type = DeclareLaunchArgument(
+        "match_type",
+        default_value="left",
+        choices=["left", "right"],
+        description="比赛类型，决定加载哪组导航坐标",
+    )
+
     third_party_actions = OpaqueFunction(function=_create_optional_third_party_actions)
 
     perception_node = Node(
@@ -104,12 +131,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
-    behavior_node = Node(
-        package="dog_behavior",
-        executable="dog_behavior_node",
-        name="dog_behavior",
-        output="screen",
-    )
+    behavior_node = OpaqueFunction(function=_create_behavior_node)
 
     navigation_executor_node = Node(
         package="dog_behavior",
@@ -124,6 +146,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_use_point_lio,
         declare_use_point_lio_rviz,
         declare_use_perception_camera,
+        declare_match_type,
         third_party_actions,
         perception_node,
         perception_camera_node,

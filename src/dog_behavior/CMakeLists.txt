@@ -18,6 +18,7 @@ find_package(nav2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_library(${PROJECT_NAME}_lib
   src/behavior_node.cpp
@@ -39,6 +40,7 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   std_msgs
   dog_interfaces
 )
+target_link_libraries(${PROJECT_NAME}_lib yaml-cpp)
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)

@@ -1,0 +1,12 @@
+# waypoints_left.yaml
+waypoints:
+  - name: "point_a"
+    x: 1.0
+    y: 2.0
+    z: 0.0
+    yaw: 1.57
+  - name: "point_b"
+    x: 3.0
+    y: 4.0
+    z: 0.0
+    yaw: 0.0

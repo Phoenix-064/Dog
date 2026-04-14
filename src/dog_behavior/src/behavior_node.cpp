@@ -1,6 +1,7 @@
 #include "dog_behavior/behavior_node.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <cmath>
 #include <cctype>
@@ -115,6 +116,10 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
   action_server_wait_timeout_sec_ = declare_parameter<double>("action_server_wait_timeout_sec", 5.0);
   feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 2.0);
 
+  match_type_ = declare_parameter<std::string>("match_type", "left");
+  const auto waypoints_file = declare_parameter<std::string>("waypoints_file", "");
+  current_waypoint_index_ = 0;
+
   if (action_server_wait_timeout_sec_ <= 0.0) {
     RCLCPP_WARN(
       get_logger(),
@@ -219,22 +224,28 @@ BehaviorNode::BehaviorNode(const rclcpp::NodeOptions & options)
       }
     });
 
+  if (!waypoints_file.empty()) {
+    loadWaypoints(waypoints_file);
+  } else {
+    RCLCPP_WARN(get_logger(), "No waypoints_file specified, navigation will use latest pose");
+  }
+
   RCLCPP_INFO(
     get_logger(),
-    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s, system_mode_topic=%s",
+    "dog_behavior initialized, localization_topic=%s, global_pose_topic=%s, default_frame_id=%s, action_name=%s, trigger_topic=%s, recovery_topic=%s, system_mode_topic=%s, match_type=%s, waypoints=%zu",
     localization_topic.c_str(),
     global_pose_topic.c_str(),
     default_frame_id_.c_str(),
     execute_behavior_action_name_.c_str(),
     execute_behavior_trigger_topic_.c_str(),
     recovery_context_topic_.c_str(),
-    system_mode_topic_.c_str());
+    system_mode_topic_.c_str(),
+    match_type_.c_str(),
+    waypoints_.size());
 }
 
 bool BehaviorNode::triggerNavigateGoal(const std::string & behavior_name)
 {
-  (void)behavior_name;
-
   NavigateToPose::Goal goal;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -253,12 +264,34 @@ bool BehaviorNode::triggerNavigateGoal(const std::string & behavior_name)
       return false;
     }
 
-    if (!has_latest_pose_) {
-      RCLCPP_WARN(get_logger(), "Cannot send navigate goal because latest pose is unavailable");
-      return false;
+    // 根据 behavior_name 在 waypoints_ 中查找匹配的航点
+    bool found_waypoint = false;
+    if (!waypoints_.empty()) {
+      // 尝试按名称查找
+      for (const auto& wp : waypoints_) {
+        if (wp.name == behavior_name) {
+          goal.pose = waypointToPoseStamped(wp);
+          found_waypoint = true;
+          break;
+        }
+      }
+      // 如果没找到且 waypoints_ 非空，按顺序取用
+      if (!found_waypoint) {
+        goal.pose = waypointToPoseStamped(waypoints_[current_waypoint_index_]);
+        current_waypoint_index_ = (current_waypoint_index_ + 1) % waypoints_.size();
+        found_waypoint = true;
+      }
     }
 
-    goal.pose = latest_pose_;
+    // 如果 waypoints_ 为空，fallback 到 latest_pose_
+    if (!found_waypoint) {
+      if (!has_latest_pose_) {
+        RCLCPP_WARN(get_logger(), "Cannot send navigate goal because latest pose is unavailable");
+        return false;
+      }
+      goal.pose = latest_pose_;
+    }
+
     navigate_goal_pending_ = true;
     execution_state_ = ExecutionState::kSendingGoal;
   }
@@ -276,9 +309,10 @@ bool BehaviorNode::triggerNavigateGoal(const std::string & behavior_name)
   navigate_client_->async_send_goal(goal, send_goal_options);
   RCLCPP_INFO(
     get_logger(),
-    "Sent navigate goal to internal executor: action_name=%s frame_id=%s",
+    "Sent navigate goal to internal executor: action_name=%s frame_id=%s waypoint=%s",
     navigate_execute_action_name_.c_str(),
-    goal.pose.header.frame_id.c_str());
+    goal.pose.header.frame_id.c_str(),
+    behavior_name.c_str());
   return true;
 }
 
@@ -855,6 +889,51 @@ bool BehaviorNode::hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose)
   constexpr double target_norm = 1.0;
   constexpr double tolerance = 0.1;
   return norm > min_norm && std::fabs(norm - target_norm) <= tolerance;
+}
+
+void BehaviorNode::loadWaypoints(const std::string & file_path)
+{
+  try {
+    const auto config = YAML::LoadFile(file_path);
+    const auto waypoints_node = config["waypoints"];
+    if (!waypoints_node || !waypoints_node.IsSequence()) {
+      RCLCPP_ERROR(get_logger(), "Invalid waypoints file format: %s", file_path.c_str());
+      return;
+    }
+
+    for (const auto & wp_node : waypoints_node) {
+      Waypoint wp;
+      wp.name = wp_node["name"].as<std::string>("");
+      wp.x = wp_node["x"].as<double>(0.0);
+      wp.y = wp_node["y"].as<double>(0.0);
+      wp.z = wp_node["z"].as<double>(0.0);
+      wp.yaw = wp_node["yaw"].as<double>(0.0);
+      waypoints_.push_back(wp);
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "Loaded %zu waypoints from %s (match_type=%s)",
+      waypoints_.size(), file_path.c_str(), match_type_.c_str());
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_logger(), "Failed to load waypoints from %s: %s", file_path.c_str(), e.what());
+  }
+}
+
+geometry_msgs::msg::PoseStamped BehaviorNode::waypointToPoseStamped(const Waypoint & wp) const
+{
+  geometry_msgs::msg::PoseStamped pose;
+  pose.header.stamp = now();
+  pose.header.frame_id = default_frame_id_;
+  pose.pose.position.x = wp.x;
+  pose.pose.position.y = wp.y;
+  pose.pose.position.z = wp.z;
+  // yaw → quaternion (绕 Z 轴旋转)
+  pose.pose.orientation.x = 0.0;
+  pose.pose.orientation.y = 0.0;
+  pose.pose.orientation.z = std::sin(wp.yaw / 2.0);
+  pose.pose.orientation.w = std::cos(wp.yaw / 2.0);
+  return pose;
 }
 
 }  // namespace dog_behavior

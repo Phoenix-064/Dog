@@ -76,6 +76,7 @@ ros2 run dog_behavior dog_behavior_navigation_executor_node
 - use_point_lio（默认 true）：是否启动 point_lio
 - use_point_lio_rviz（默认 false）：是否让 point_lio 同时启动 RViz
 - use_perception_camera（默认 false）：是否启动 dog_perception_camera_node
+- match_type（默认 left，可选 left/right）：比赛类型，决定加载哪组导航坐标文件
 
 示例：
 
@@ -91,6 +92,9 @@ ros2 launch dog_behavior launch.py use_perception_camera:=true
 
 # 仅启动核心包（关闭第三方）
 ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
+
+# 指定比赛类型（左侧/右侧）
+ros2 launch dog_behavior launch.py match_type:=right
 ~~~
 
 ## 5. 运行后快速验收

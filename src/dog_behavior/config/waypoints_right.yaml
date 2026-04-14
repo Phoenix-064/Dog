@@ -1,0 +1,12 @@
+# waypoints_right.yaml
+waypoints:
+  - name: "point_c"
+    x: 5.0
+    y: 6.0
+    z: 0.0
+    yaw: -1.57
+  - name: "point_d"
+    x: 7.0
+    y: 8.0
+    z: 0.0
+    yaw: 0.0
