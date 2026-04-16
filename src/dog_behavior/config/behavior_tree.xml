@@ -1,0 +1,17 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence>
+      <CheckSystemMode mode="{system_mode}" expected_mode="normal"/>
+      <WaitForPose has_pose="{has_current_pose}" timeout_ms="5000"/>
+      <SelectWaypoint waypoints="{waypoints}" index="{waypoint_index}" target_pose="{target_pose}"/>
+      <ExecuteBehaviorAction
+        behavior_name="{behavior_name}"
+        target_pose="{target_pose}"
+        action_name="/behavior/execute"/>
+      <NavigateToPoseAction
+        goal="{target_pose}"
+        action_name="/navigate_to_pose"
+        state_topic="/behavior/nav_exec_state"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

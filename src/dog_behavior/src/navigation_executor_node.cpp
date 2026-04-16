@@ -1,9 +1,8 @@
 #include "dog_behavior/navigation_executor_node.hpp"
+#include "dog_behavior/common/payload_utils.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
-#include <cmath>
 #include <functional>
 #include <string>
 #include <utility>
@@ -13,45 +12,6 @@ namespace dog_behavior
 
 namespace
 {
-int hexDigitValue(const char c)
-{
-  if (c >= '0' && c <= '9') {
-    return c - '0';
-  }
-  if (c >= 'a' && c <= 'f') {
-    return 10 + (c - 'a');
-  }
-  if (c >= 'A' && c <= 'F') {
-    return 10 + (c - 'A');
-  }
-  return -1;
-}
-
-std::string percentDecode(const std::string & value)
-{
-  std::string decoded;
-  decoded.reserve(value.size());
-
-  size_t index = 0;
-  while (index < value.size()) {
-    if (value[index] == '%' && (index + 2) < value.size()) {
-      const auto high = hexDigitValue(value[index + 1]);
-      const auto low = hexDigitValue(value[index + 2]);
-      if (high >= 0 && low >= 0) {
-        const auto byte_value = static_cast<unsigned char>((high << 4) | low);
-        decoded.push_back(static_cast<char>(byte_value));
-        index += 3;
-        continue;
-      }
-    }
-
-    decoded.push_back(value[index]);
-    ++index;
-  }
-
-  return decoded;
-}
-
 }  // namespace
 
 NavigationExecutorNode::NavigationExecutorNode()
@@ -182,7 +142,7 @@ rclcpp_action::GoalResponse NavigationExecutorNode::handleGoal(
     return rclcpp_action::GoalResponse::REJECT;
   }
 
-  if (!isFinitePose(goal->pose) || !hasValidQuaternionNorm(goal->pose)) {
+  if (!utils::isFinitePose(goal->pose) || !utils::hasValidQuaternionNorm(goal->pose)) {
     RCLCPP_WARN(get_logger(), "Reject navigation goal due to invalid pose values");
     return rclcpp_action::GoalResponse::REJECT;
   }
@@ -448,7 +408,7 @@ void NavigationExecutorNode::systemModeCallback(const std_msgs::msg::String::Con
     return;
   }
 
-  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
+  const auto mode = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "mode"));
   if (mode.empty()) {
     return;
   }
@@ -497,8 +457,8 @@ void NavigationExecutorNode::systemModeCallback(const std_msgs::msg::String::Con
 
 void NavigationExecutorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg)
 {
-  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
-  const auto target_state = normalizeToken(parseKeyValuePayload(msg->data, "target_state"));
+  const auto mode = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "mode"));
+  const auto target_state = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "target_state"));
 
   std::lock_guard<std::mutex> lock(state_mutex_);
   if (mode == "cold_start") {
@@ -510,79 +470,12 @@ void NavigationExecutorNode::recoveryContextCallback(const std_msgs::msg::String
     return;
   }
 
-  navigation_blocked_by_recovery_ = isCompletedState(target_state);
+  navigation_blocked_by_recovery_ = utils::isCompletedState(target_state);
 }
 
 bool NavigationExecutorNode::canAcceptGoalLocked() const
 {
   return nav2_server_ready_ && !internal_goal_active_ && !forwarding_goal_pending_;
-}
-
-std::string NavigationExecutorNode::normalizeToken(const std::string & value)
-{
-  std::string normalized;
-  normalized.reserve(value.size());
-  for (const auto ch : value) {
-    if (std::isspace(static_cast<unsigned char>(ch))) {
-      continue;
-    }
-    normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-  }
-  return normalized;
-}
-
-std::string NavigationExecutorNode::parseKeyValuePayload(const std::string & payload, const std::string & key)
-{
-  static const std::string delimiter = ";";
-  const auto normalized_key = normalizeToken(key);
-
-  size_t start = 0;
-  while (start <= payload.size()) {
-    const auto end = payload.find(delimiter, start);
-    const auto token = payload.substr(start, end == std::string::npos ? std::string::npos : end - start);
-    const auto equal_pos = token.find('=');
-    if (equal_pos != std::string::npos) {
-      const auto token_key = normalizeToken(token.substr(0, equal_pos));
-      if (token_key == normalized_key) {
-        return percentDecode(token.substr(equal_pos + 1));
-      }
-    }
-
-    if (end == std::string::npos) {
-      break;
-    }
-    start = end + 1;
-  }
-
-  return "";
-}
-
-bool NavigationExecutorNode::isCompletedState(const std::string & target_state) const
-{
-  return target_state == "done" || target_state == "completed" || target_state == "succeeded" ||
-         target_state == "success" || target_state == "finished";
-}
-
-bool NavigationExecutorNode::isFinitePose(const geometry_msgs::msg::PoseStamped & pose) const
-{
-  return std::isfinite(pose.pose.position.x) && std::isfinite(pose.pose.position.y) &&
-         std::isfinite(pose.pose.position.z) && std::isfinite(pose.pose.orientation.x) &&
-         std::isfinite(pose.pose.orientation.y) && std::isfinite(pose.pose.orientation.z) &&
-         std::isfinite(pose.pose.orientation.w);
-}
-
-bool NavigationExecutorNode::hasValidQuaternionNorm(const geometry_msgs::msg::PoseStamped & pose) const
-{
-  const double norm =
-    (pose.pose.orientation.x * pose.pose.orientation.x) +
-    (pose.pose.orientation.y * pose.pose.orientation.y) +
-    (pose.pose.orientation.z * pose.pose.orientation.z) +
-    (pose.pose.orientation.w * pose.pose.orientation.w);
-
-  constexpr double min_norm = 1e-6;
-  constexpr double target_norm = 1.0;
-  constexpr double tolerance = 0.1;
-  return norm > min_norm && std::fabs(norm - target_norm) <= tolerance;
 }
 
 void NavigationExecutorNode::publishExecutionState(ExecutionState state)

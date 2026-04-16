@@ -1,10 +1,9 @@
 #include "dog_behavior/behavior_node.hpp"
+#include "dog_behavior/common/payload_utils.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 
-#include <cmath>
-#include <cctype>
 #include <chrono>
 #include <functional>
 #include <utility>
@@ -14,52 +13,6 @@ namespace dog_behavior
 
 namespace
 {
-
-/// @brief 将十六进制字符转换为对应数值。
-/// @param c 十六进制字符。
-/// @return 有效时返回 0-15，无效时返回 -1。
-int hexDigitValue(const char c)
-{
-  if (c >= '0' && c <= '9') {
-    return c - '0';
-  }
-  if (c >= 'a' && c <= 'f') {
-    return 10 + (c - 'a');
-  }
-  if (c >= 'A' && c <= 'F') {
-    return 10 + (c - 'A');
-  }
-  return -1;
-}
-
-/// @brief 对百分号编码字符串执行解码。
-/// @param value 可能包含 `%xx` 编码片段的字符串。
-/// @return 解码后的字符串。
-std::string percentDecode(const std::string & value)
-{
-  std::string decoded;
-  decoded.reserve(value.size());
-
-  size_t index = 0;
-  while (index < value.size()) {
-    if (value[index] == '%' && (index + 2) < value.size()) {
-      const auto high = hexDigitValue(value[index + 1]);
-      const auto low = hexDigitValue(value[index + 2]);
-      if (high >= 0 && low >= 0) {
-        const auto byte_value = static_cast<unsigned char>((high << 4) | low);
-        decoded.push_back(static_cast<char>(byte_value));
-        index += 3;
-        continue;
-      }
-    }
-
-    decoded.push_back(value[index]);
-    ++index;
-  }
-
-  return decoded;
-}
-
 std::string getBehaviorTreeXmlPath()
 {
   const auto package_share = ament_index_cpp::get_package_share_directory("dog_behavior");
@@ -346,7 +299,7 @@ void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr ms
     pose_msg.header.frame_id = default_frame_id_;
   }
 
-  if (!isFinitePose(pose_msg.pose)) {
+  if (!utils::isFinitePose(pose_msg.pose)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(),
       *get_clock(),
@@ -356,7 +309,7 @@ void BehaviorNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr ms
     return;
   }
 
-  if (!hasValidQuaternionNorm(pose_msg.pose)) {
+  if (!utils::hasValidQuaternionNorm(pose_msg.pose)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(),
       *get_clock(),
@@ -388,9 +341,9 @@ void BehaviorNode::executeTriggerCallback(const std_msgs::msg::String::ConstShar
 
 void BehaviorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg)
 {
-  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
-  const auto task_phase = normalizeToken(parseKeyValuePayload(msg->data, "task_phase"));
-  const auto target_state = normalizeToken(parseKeyValuePayload(msg->data, "target_state"));
+  const auto mode = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "mode"));
+  const auto task_phase = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "task_phase"));
+  const auto target_state = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "target_state"));
 
   std::lock_guard<std::mutex> lock(state_mutex_);
   if (mode == "cold_start") {
@@ -409,7 +362,7 @@ void BehaviorNode::recoveryContextCallback(const std_msgs::msg::String::ConstSha
     return;
   }
 
-  if (!isCompletedState(target_state)) {
+  if (!utils::isCompletedState(target_state)) {
     recovered_completed_task_phases_.erase(task_phase);
     RCLCPP_INFO(
       get_logger(),
@@ -432,7 +385,7 @@ void BehaviorNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPt
     return;
   }
 
-  const auto mode = normalizeToken(parseKeyValuePayload(msg->data, "mode"));
+  const auto mode = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "mode"));
   if (mode.empty()) {
     return;
   }
@@ -596,7 +549,7 @@ void BehaviorNode::feedbackWatchdogTimerCallback()
 
 bool BehaviorNode::triggerExecuteBehavior(const std::string & behavior_name)
 {
-  const auto normalized_behavior_name = normalizeToken(behavior_name);
+  const auto normalized_behavior_name = utils::normalizeToken(behavior_name);
   ExecuteBehavior::Goal goal;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -778,7 +731,7 @@ bool BehaviorNode::canSendGoalLocked() const
 
 bool BehaviorNode::IsTaskPhaseRecoveredForTest(const std::string & task_phase) const
 {
-  const auto normalized_task_phase = normalizeToken(task_phase);
+  const auto normalized_task_phase = utils::normalizeToken(task_phase);
   std::lock_guard<std::mutex> lock(state_mutex_);
   return recovered_completed_task_phases_.find(normalized_task_phase) != recovered_completed_task_phases_.end();
 }
@@ -819,76 +772,6 @@ std::string BehaviorNode::executionStateToString(ExecutionState state) const
     default:
       return "unknown";
   }
-}
-
-std::string BehaviorNode::normalizeToken(const std::string & value)
-{
-  std::string normalized;
-  normalized.reserve(value.size());
-  for (const auto ch : value) {
-    if (std::isspace(static_cast<unsigned char>(ch))) {
-      continue;
-    }
-    normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-  }
-  return normalized;
-}
-
-std::string BehaviorNode::parseKeyValuePayload(const std::string & payload, const std::string & key)
-{
-  static const std::string delimiter = ";";
-  const auto normalized_key = normalizeToken(key);
-
-  size_t start = 0;
-  while (start <= payload.size()) {
-    const auto end = payload.find(delimiter, start);
-    const auto token = payload.substr(start, end == std::string::npos ? std::string::npos : end - start);
-    const auto equal_pos = token.find('=');
-    if (equal_pos != std::string::npos) {
-      const auto token_key = normalizeToken(token.substr(0, equal_pos));
-      if (token_key == normalized_key) {
-        return percentDecode(token.substr(equal_pos + 1));
-      }
-    }
-
-    if (end == std::string::npos) {
-      break;
-    }
-    start = end + 1;
-  }
-
-  return "";
-}
-
-bool BehaviorNode::isCompletedState(const std::string & target_state) const
-{
-  return target_state == "done" || target_state == "completed" || target_state == "succeeded" ||
-         target_state == "success" || target_state == "finished";
-}
-
-bool BehaviorNode::isFinitePose(const geometry_msgs::msg::Pose & pose) const
-{
-  return std::isfinite(pose.position.x) &&
-         std::isfinite(pose.position.y) &&
-         std::isfinite(pose.position.z) &&
-         std::isfinite(pose.orientation.x) &&
-         std::isfinite(pose.orientation.y) &&
-         std::isfinite(pose.orientation.z) &&
-         std::isfinite(pose.orientation.w);
-}
-
-bool BehaviorNode::hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const
-{
-  const double norm =
-    (pose.orientation.x * pose.orientation.x) +
-    (pose.orientation.y * pose.orientation.y) +
-    (pose.orientation.z * pose.orientation.z) +
-    (pose.orientation.w * pose.orientation.w);
-
-  constexpr double min_norm = 1e-6;
-  constexpr double target_norm = 1.0;
-  constexpr double tolerance = 0.1;
-  return norm > min_norm && std::fabs(norm - target_norm) <= tolerance;
 }
 
 void BehaviorNode::loadWaypoints(const std::string & file_path)

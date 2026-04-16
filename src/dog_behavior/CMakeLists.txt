@@ -23,7 +23,14 @@ find_package(yaml-cpp REQUIRED)
 add_library(${PROJECT_NAME}_lib
   src/behavior_node.cpp
   src/behavior_tree.cpp
+  src/behavior_tree_node.cpp
+  src/bt_nodes/check_system_mode.cpp
+  src/bt_nodes/wait_for_pose_condition.cpp
+  src/bt_nodes/select_waypoint_action.cpp
+  src/bt_nodes/execute_behavior_action.cpp
+  src/bt_nodes/navigate_to_pose_action.cpp
   src/navigation_executor_node.cpp
+  src/common/payload_utils.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -45,12 +52,16 @@ target_link_libraries(${PROJECT_NAME}_lib yaml-cpp)
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
 
+add_executable(${PROJECT_NAME}_bt_node src/behavior_tree_main.cpp)
+target_link_libraries(${PROJECT_NAME}_bt_node ${PROJECT_NAME}_lib)
+
 add_executable(${PROJECT_NAME}_navigation_executor_node src/navigation_executor_main.cpp)
 target_link_libraries(${PROJECT_NAME}_navigation_executor_node ${PROJECT_NAME}_lib)
 
 install(TARGETS
   ${PROJECT_NAME}_lib
   ${PROJECT_NAME}_node
+  ${PROJECT_NAME}_bt_node
   ${PROJECT_NAME}_navigation_executor_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -103,6 +114,78 @@ if(BUILD_TESTING)
       rclcpp
       rclcpp_action
       nav2_msgs
+      std_msgs
+    )
+  endif()
+
+  ament_add_gtest(test_payload_utils test/test_payload_utils.cpp)
+  if(TARGET test_payload_utils)
+    target_link_libraries(test_payload_utils ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_payload_utils
+      geometry_msgs
+    )
+  endif()
+
+  ament_add_gtest(test_behavior_tree_node test/test_behavior_tree_node.cpp)
+  if(TARGET test_behavior_tree_node)
+    target_compile_definitions(test_behavior_tree_node PRIVATE
+      DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/behavior_tree_test.xml"
+    )
+    target_link_libraries(test_behavior_tree_node ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_behavior_tree_node
+      rclcpp
+      nav_msgs
+      std_msgs
+      geometry_msgs
+    )
+  endif()
+
+  ament_add_gtest(test_check_system_mode test/test_check_system_mode.cpp)
+  if(TARGET test_check_system_mode)
+    target_link_libraries(test_check_system_mode ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_check_system_mode
+      behaviortree_cpp_v3
+    )
+  endif()
+
+  ament_add_gtest(test_wait_for_pose_condition test/test_wait_for_pose_condition.cpp)
+  if(TARGET test_wait_for_pose_condition)
+    target_link_libraries(test_wait_for_pose_condition ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_wait_for_pose_condition
+      behaviortree_cpp_v3
+    )
+  endif()
+
+  ament_add_gtest(test_select_waypoint_action test/test_select_waypoint_action.cpp)
+  if(TARGET test_select_waypoint_action)
+    target_link_libraries(test_select_waypoint_action ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_select_waypoint_action
+      behaviortree_cpp_v3
+      geometry_msgs
+    )
+  endif()
+
+  ament_add_gtest(test_execute_behavior_action test/test_execute_behavior_action.cpp)
+  if(TARGET test_execute_behavior_action)
+    target_link_libraries(test_execute_behavior_action ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_execute_behavior_action
+      rclcpp
+      rclcpp_action
+      behaviortree_cpp_v3
+      dog_interfaces
+      geometry_msgs
+    )
+  endif()
+
+  ament_add_gtest(test_navigate_to_pose_action test/test_navigate_to_pose_action.cpp)
+  if(TARGET test_navigate_to_pose_action)
+    target_link_libraries(test_navigate_to_pose_action ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_navigate_to_pose_action
+      rclcpp
+      rclcpp_action
+      behaviortree_cpp_v3
+      nav2_msgs
+      geometry_msgs
       std_msgs
     )
   endif()

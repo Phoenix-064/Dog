@@ -54,11 +54,6 @@ private:
   void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
 
   bool canAcceptGoalLocked() const;
-  static std::string normalizeToken(const std::string & value);
-  static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
-  bool isCompletedState(const std::string & target_state) const;
-  bool isFinitePose(const geometry_msgs::msg::PoseStamped & pose) const;
-  bool hasValidQuaternionNorm(const geometry_msgs::msg::PoseStamped & pose) const;
   ExecutionState mapNav2ResultState(
     rclcpp_action::ResultCode result_code,
     bool timeout_terminal,

@@ -119,27 +119,6 @@ private:
   /// @param state 执行状态枚举值。
   /// @return 小写状态标记。
   std::string executionStateToString(ExecutionState state) const;
-  /// @brief 通过小写化并移除空白规范化自由格式标记。
-  /// @param value 原始标记文本。
-  /// @return 规范化后的标记。
-  static std::string normalizeToken(const std::string & value);
-  /// @brief 解析键值对负载文本并解码百分号编码值。
-  /// @param payload 使用分号分隔键值对的输入负载。
-  /// @param key 要提取的目标键。
-  /// @return 该键对应的解码值，缺失时返回空字符串。
-  static std::string parseKeyValuePayload(const std::string & payload, const std::string & key);
-  /// @brief 判断目标状态是否表示已完成。
-  /// @param target_state 状态标记。
-  /// @return 对于完成终态返回 true。
-  bool isCompletedState(const std::string & target_state) const;
-  /// @brief 校验位姿各分量均为有限值。
-  /// @param pose 待校验的位姿。
-  /// @return 当不存在 NaN/Inf 时返回 true。
-  bool isFinitePose(const geometry_msgs::msg::Pose & pose) const;
-  /// @brief 按单位四元数容差校验四元数模长。
-  /// @param pose 其朝向四元数需要被检查的位姿。
-  /// @return 当四元数模长在允许范围内时返回 true。
-  bool hasValidQuaternionNorm(const geometry_msgs::msg::Pose & pose) const;
 
   /// @brief 从 YAML 文件加载预设航点列表。
   /// @param file_path 航点 YAML 文件的绝对路径。
