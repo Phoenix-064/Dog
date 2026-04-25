@@ -13,8 +13,8 @@
 范围包含：
 
 1. 对外 Action：/behavior/execute，类型 dog_interfaces/action/ExecuteBehavior。
-2. 内部导航 Action：/behavior/navigate_execute，类型 nav2_msgs/action/NavigateToPose。
-3. 导航执行代理下游 Action：/navigate_to_pose，类型 nav2_msgs/action/NavigateToPose。
+2. 行为树导航 Action：/navigate_to_pose，类型 nav2_msgs/action/NavigateToPose。
+3. 导航执行状态 Topic：/behavior/nav_exec_state，类型 std_msgs/msg/String。
 
 范围不包含：
 
@@ -24,7 +24,7 @@
 ## 3. 设计原则
 
 1. 对外单一入口：上层系统只依赖 ExecuteBehavior。
-2. 内部分层适配：BehaviorNode 负责语义路由与字段映射。
+2. 行为树内聚适配：BehaviorTreeNode 与 BT 叶子负责语义路由与字段映射。
 3. 语义稳定优先：外部结果语义稳定，不透出 Nav2 实现细节。
 4. 错误可观测：任何失败路径都应给出可检索 detail 文本。
 
@@ -33,8 +33,8 @@
 | 层级 | 接口名 | 类型 | 角色 |
 | --- | --- | --- | --- |
 | 外部调用层 | /behavior/execute | dog_interfaces/action/ExecuteBehavior | 对外标准行为入口 |
-| 行为到导航执行层 | /behavior/navigate_execute | nav2_msgs/action/NavigateToPose | 内部导航执行请求 |
-| 导航执行到 Nav2 层 | /navigate_to_pose | nav2_msgs/action/NavigateToPose | 下游 Nav2 标准导航入口 |
+| 行为树到 Nav2 层 | /navigate_to_pose | nav2_msgs/action/NavigateToPose | 导航执行请求 |
+| 状态观测层 | /behavior/nav_exec_state | std_msgs/msg/String | 导航执行状态观测 |
 
 ## 5. Goal 字段映射
 
@@ -47,7 +47,7 @@
 
 ### 5.2 路由规则
 
-1. 行为树或路由策略判定为导航语义后，发送到 /behavior/navigate_execute。
+1. 行为树或路由策略判定为导航语义后，发送到 /navigate_to_pose。
 2. 非导航语义继续走 ExecuteBehavior 原有执行链路。
 3. 路由判定结果必须记录日志，含 behavior_name 与目标 action 名。
 
@@ -92,7 +92,7 @@
 | 内部执行状态 | 对外状态建议 |
 | --- | --- |
 | waiting_server 或 waiting_nav2_server | waiting_server |
-| sending_goal 或 forwarding_goal | sending_goal |
+| sending_goal | sending_goal |
 | running | running |
 | succeeded | succeeded |
 | timeout | timeout |
@@ -127,7 +127,6 @@
 | 参数名 | 默认值 | 说明 |
 | --- | --- | --- |
 | execute_behavior_action_name | /behavior/execute | 对外标准 Action 名 |
-| navigate_execute_action_name | /behavior/navigate_execute | 内部导航执行 Action 名 |
 | nav2_action_name | /navigate_to_pose | 下游 Nav2 Action 名 |
 | action_server_wait_timeout_sec | 5.0 | 对外 Action server 等待超时 |
 | nav2_server_wait_timeout_sec | 10.0 | Nav2 Action server 等待超时 |
@@ -148,17 +147,17 @@
 
 1. 新增映射逻辑具备单元测试覆盖。
 2. 所有 detail 值为固定枚举，不允许自由文本漂移。
-3. 联调日志可追踪一条请求在三层接口中的完整链路。
+3. 联调日志可追踪一条请求在行为树与 Nav2 间的完整链路。
 
 ## 12. 迁移计划
 
 1. 第一步：补齐映射常量与状态对照表，不改外部接口。
 2. 第二步：实现 feedback 进度归一化与 detail 标准化。
-3. 第三步：补充单测并回归现有导航代理测试。
+3. 第三步：补充单测并回归行为树导航叶子测试。
 4. 第四步：在集成环境灰度发布，观察错误码分布与超时率。
 
 ## 13. 向后兼容性
 
 1. 对外 Action 名与消息定义保持不变。
 2. 新增 detail 枚举值不影响旧调用方字段解析。
-3. 内部导航接口继续使用 NavigateToPose，不向上暴露 Nav2 细节。
+3. 行为树内部继续使用 NavigateToPose，不向上暴露 Nav2 细节。

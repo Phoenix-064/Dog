@@ -1,8 +1,14 @@
 #include "dog_behavior/behavior_tree_node.hpp"
 
 #include "dog_behavior/bt_nodes/check_system_mode.hpp"
+#include "dog_behavior/bt_nodes/advance_place_counter_action.hpp"
+#include "dog_behavior/bt_nodes/execute_place_boxes_action.hpp"
 #include "dog_behavior/bt_nodes/execute_behavior_action.hpp"
 #include "dog_behavior/bt_nodes/navigate_to_pose_action.hpp"
+#include "dog_behavior/bt_nodes/place_index_action.hpp"
+#include "dog_behavior/bt_nodes/place_rule_action.hpp"
+#include "dog_behavior/bt_nodes/publish_math_answer_action.hpp"
+#include "dog_behavior/bt_nodes/set_boxes_type_action.hpp"
 #include "dog_behavior/bt_nodes/select_waypoint_action.hpp"
 #include "dog_behavior/bt_nodes/wait_for_pose_condition.hpp"
 #include "dog_behavior/common/payload_utils.hpp"
@@ -10,7 +16,9 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <utility>
 
@@ -42,6 +50,28 @@ std::string nodeStatusToString(const BT::NodeStatus status)
   }
 }
 
+geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint)
+{
+  geometry_msgs::msg::PoseStamped pose;
+  pose.header.frame_id = "map";
+  pose.pose.position.x = waypoint.x;
+  pose.pose.position.y = waypoint.y;
+  pose.pose.position.z = waypoint.z;
+  pose.pose.orientation.x = 0.0;
+  pose.pose.orientation.y = 0.0;
+  pose.pose.orientation.z = std::sin(waypoint.yaw / 2.0);
+  pose.pose.orientation.w = std::cos(waypoint.yaw / 2.0);
+  return pose;
+}
+
+geometry_msgs::msg::PoseStamped defaultGoalPose()
+{
+  geometry_msgs::msg::PoseStamped pose;
+  pose.header.frame_id = "map";
+  pose.pose.orientation.w = 1.0;
+  return pose;
+}
+
 }  // namespace
 
 BehaviorTreeNode::BehaviorTreeNode()
@@ -69,6 +99,11 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
     "recovery_context_topic",
     "/lifecycle/recovery_context");
   system_mode_topic_ = declare_parameter<std::string>("system_mode_topic", "/lifecycle/system_mode");
+  match_type_ = utils::normalizeToken(declare_parameter<std::string>("match_type", "left"));
+  if (match_type_ != "left" && match_type_ != "right") {
+    RCLCPP_WARN(get_logger(), "Invalid match_type=%s, fallback to left", match_type_.c_str());
+    match_type_ = "left";
+  }
   tree_xml_file_path_ = declare_parameter<std::string>("tree_xml_file_path", getBehaviorTreeXmlPath());
   tick_period_ms_ = declare_parameter<int>("bt_tick_period_ms", 100);
   const auto waypoints_file = declare_parameter<std::string>("waypoints_file", "");
@@ -114,11 +149,36 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 
   blackboard_ = BT::Blackboard::create();
   blackboard_->set("system_mode", system_mode_);
+  blackboard_->set("match_type", match_type_);
   blackboard_->set("recovery_context", std::string(""));
   blackboard_->set("behavior_name", std::string(""));
   blackboard_->set("has_current_pose", false);
+  blackboard_->set("counter", -1);
+  blackboard_->set("food_box_count", 0);
+  blackboard_->set("tool_box_count", 0);
+  blackboard_->set("instrument_box_count", 0);
+  blackboard_->set("medical_box_count", 0);
+  blackboard_->set("boxes_type_list", std::vector<std::string>{});
+  blackboard_->set("boxes_ready", false);
+  blackboard_->set("boxes_capture_stamp", static_cast<int64_t>(0));
   blackboard_->set("waypoints", waypoints_);
   blackboard_->set("waypoint_index", 0);
+
+  auto set_goal_pose = [this](const std::string & key, const size_t index) {
+      if (index < waypoints_.size()) {
+        blackboard_->set(key, waypointToPose(waypoints_[index]));
+      } else {
+        blackboard_->set(key, defaultGoalPose());
+      }
+    };
+  set_goal_pose("WayPointGoal1", 0);
+  set_goal_pose("WayPointGoal2", 1);
+  set_goal_pose("WayPointGoal3", 2);
+  set_goal_pose("PlaceGoal1", 3);
+  set_goal_pose("PlaceGoal2", 4);
+  set_goal_pose("PlaceGoal3", 5);
+  set_goal_pose("PlaceGoal4", 6);
+  set_goal_pose("WayPointGoal4", 7);
 
   registerBuiltinNodes();
   configureTree();
@@ -144,6 +204,12 @@ void BehaviorTreeNode::registerBuiltinNodes()
   factory_.registerNodeType<bt_nodes::SelectWaypointAction>("SelectWaypoint");
   factory_.registerNodeType<bt_nodes::ExecuteBehaviorAction>("ExecuteBehaviorAction");
   factory_.registerNodeType<bt_nodes::NavigateToPoseAction>("NavigateToPoseAction");
+  factory_.registerNodeType<bt_nodes::SetBoxesTypeAction>("SetBoxesTypeAction");
+  factory_.registerNodeType<bt_nodes::AdvancePlaceCounterAction>("AdvancePlaceCounterAction");
+  factory_.registerNodeType<bt_nodes::PlaceRuleAction>("PlaceRuleAction");
+  factory_.registerNodeType<bt_nodes::PlaceIndexAction>("PlaceIndexAction");
+  factory_.registerNodeType<bt_nodes::ExecutePlaceBoxesAction>("ExecutePlaceBoxesAction");
+  factory_.registerNodeType<bt_nodes::PublishMathAnswerAction>("PublishMathAnswerAction");
 }
 
 void BehaviorTreeNode::configureTree()

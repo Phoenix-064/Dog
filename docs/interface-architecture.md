@@ -30,18 +30,18 @@
 | --- | --- | --- | --- |
 | `/target/place_tasks` | 规划层 -> 运控层 | 按需 | 一个包含目标解算后的队列，包含执行命令，形如：`[ {爪子ID: 2, Action: 释出, 对应绝对目标坐标: X,Y,Z ...}, ... ]`，运控只需要照做去坐标系开/关指定爪子。 |
 
-### 2.3 行为编排到导航执行通道（新增）
+### 2.3 行为编排到 Nav2 通道（现行）
 
-为保证可扩展性，导航执行能力从行为编排节点中解耦为独立节点。`dog_behavior` 内部采用 Action 代理方式对接 Nav2：
+当前架构中，`dog_behavior` 通过行为树叶子节点直接对接 Nav2：
 
 | 接口名称 | 方向 | 类型 | 职责 |
 | --- | --- | --- | --- |
-| `/behavior/navigate_execute` | 行为编排层 -> 导航执行层 | `nav2_msgs/action/NavigateToPose` | 内部导航执行请求，默认单活动 goal。 |
-| `/behavior/nav_exec_state` | 导航执行层 -> 行为编排/观测层 | `std_msgs/String` | 导航执行状态，典型值：`idle`/`running`/`timeout`/`failed`。 |
+| `/navigate_to_pose` | 行为编排层 -> Nav2 | `nav2_msgs/action/NavigateToPose` | 导航执行请求，默认单活动 goal。 |
+| `/behavior/nav_exec_state` | 行为编排层 -> 观测层 | `std_msgs/String` | 导航执行状态，典型值：`idle`/`running`/`timeout`/`failed`。 |
 
 设计约束：
-- 行为编排层不直接对接 Nav2 的下游 action server。
-- 导航执行层独立处理超时、取消传播与系统模式门控（`idle_spinning`/`degraded`）。
+- 行为树导航叶子节点直接管理 Nav2 goal 的发送、轮询与取消。
+- 导航状态由 `dog_behavior` 统一发布，不再存在独立导航代理层。
 
 ## 3. 边界情况：抓空处理 (Error Resolving)
 

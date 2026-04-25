@@ -6,8 +6,10 @@
 #include <std_msgs/msg/string.hpp>
 
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -28,6 +30,17 @@ bool waitUntil(
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   return condition();
+}
+
+std::string readTextFile(const std::string & path)
+{
+  std::ifstream ifs(path);
+  if (!ifs.is_open()) {
+    return "";
+  }
+  std::ostringstream oss;
+  oss << ifs.rdbuf();
+  return oss.str();
 }
 
 class BehaviorTreeNodeTest : public ::testing::Test
@@ -201,6 +214,54 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
 
   executor.remove_node(io_node);
   executor.remove_node(bt_node);
+}
+
+TEST(BehaviorTreeXmlPlanCoverageTest, PlaceGoalsFollowForwardThenReverseOrder)
+{
+  const std::string xml = readTextFile(DOG_BEHAVIOR_PHASE3_BT_XML_PATH);
+  ASSERT_FALSE(xml.empty());
+
+  const auto first_p1 = xml.find("place_goal=\"{PlaceGoal1}\"");
+  const auto first_p2 = xml.find("place_goal=\"{PlaceGoal2}\"", first_p1 + 1);
+  const auto first_p3 = xml.find("place_goal=\"{PlaceGoal3}\"", first_p2 + 1);
+  const auto first_p4 = xml.find("place_goal=\"{PlaceGoal4}\"", first_p3 + 1);
+
+  ASSERT_NE(first_p1, std::string::npos);
+  ASSERT_NE(first_p2, std::string::npos);
+  ASSERT_NE(first_p3, std::string::npos);
+  ASSERT_NE(first_p4, std::string::npos);
+  EXPECT_LT(first_p1, first_p2);
+  EXPECT_LT(first_p2, first_p3);
+  EXPECT_LT(first_p3, first_p4);
+
+  const auto second_p4 = xml.find("place_goal=\"{PlaceGoal4}\"", first_p4 + 1);
+  const auto second_p3 = xml.find("place_goal=\"{PlaceGoal3}\"", second_p4 + 1);
+  const auto second_p2 = xml.find("place_goal=\"{PlaceGoal2}\"", second_p3 + 1);
+  const auto second_p1 = xml.find("place_goal=\"{PlaceGoal1}\"", second_p2 + 1);
+
+  ASSERT_NE(second_p4, std::string::npos);
+  ASSERT_NE(second_p3, std::string::npos);
+  ASSERT_NE(second_p2, std::string::npos);
+  ASSERT_NE(second_p1, std::string::npos);
+  EXPECT_LT(second_p4, second_p3);
+  EXPECT_LT(second_p3, second_p2);
+  EXPECT_LT(second_p2, second_p1);
+}
+
+TEST(BehaviorTreeXmlPlanCoverageTest, MathNodePlacedAfterWaypoint3BeforeFirstPickup)
+{
+  const std::string xml = readTextFile(DOG_BEHAVIOR_PHASE3_BT_XML_PATH);
+  ASSERT_FALSE(xml.empty());
+
+  const auto waypoint3 = xml.find("goal=\"{WayPointGoal3}\"");
+  const auto math_node = xml.find("<PublishMathAnswerAction", waypoint3 + 1);
+  const auto first_pickup = xml.find("behavior_name=\"PickUpBoxes\"", math_node + 1);
+
+  ASSERT_NE(waypoint3, std::string::npos);
+  ASSERT_NE(math_node, std::string::npos);
+  ASSERT_NE(first_pickup, std::string::npos);
+  EXPECT_LT(waypoint3, math_node);
+  EXPECT_LT(math_node, first_pickup);
 }
 
 }  // namespace

@@ -53,8 +53,8 @@ def _create_behavior_node(context, *args, **kwargs):
     return [
         Node(
             package="dog_behavior",
-            executable="dog_behavior_node",
-            name="dog_behavior",
+            executable="dog_behavior_bt_node",
+            name="dog_behavior_bt",
             output="screen",
             parameters=[{
                 "match_type": match_type,
@@ -133,13 +133,6 @@ def generate_launch_description() -> LaunchDescription:
 
     behavior_node = OpaqueFunction(function=_create_behavior_node)
 
-    navigation_executor_node = Node(
-        package="dog_behavior",
-        executable="dog_behavior_navigation_executor_node",
-        name="dog_navigation_executor",
-        output="screen",
-    )
-
     return LaunchDescription([
         declare_use_livox,
         declare_livox_model,
@@ -152,5 +145,4 @@ def generate_launch_description() -> LaunchDescription:
         perception_camera_node,
         lifecycle_node,
         behavior_node,
-        navigation_executor_node,
     ])

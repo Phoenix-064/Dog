@@ -50,6 +50,7 @@ private:
   std::string execute_behavior_trigger_topic_;
   std::string recovery_context_topic_;
   std::string system_mode_topic_;
+  std::string match_type_;
   std::string tree_xml_file_path_;
   int tick_period_ms_;
 

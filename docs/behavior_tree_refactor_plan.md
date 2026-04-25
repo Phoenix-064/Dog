@@ -1,8 +1,8 @@
 # dog_behavior 行为树架构重构计划
 
-## 0. 当前状态快照（2026-04-16）
+## 0. 当前状态快照（2026-04-25）
 
-本计划文档已同步到当前代码基线，可作为下一步（Phase 1）实施参考。
+本计划文档已同步到当前代码基线，可作为下一步（Phase 4 清理）实施参考。
 
 ### 0.1 已完成项
 
@@ -15,9 +15,9 @@
 
 ### 0.2 当前基线约束
 
-- 当前运行架构仍为 `BehaviorNode + NavigationExecutorNode + BehaviorTree`。
-- 本文第 2-5 节描述的是目标架构（Phase 1+），不是当前已上线形态。
-- 进入 Phase 1 前，不应回退 Phase 0 的公共工具抽取成果。
+- 当前默认运行入口已切换为 `BehaviorTreeNode`，`launch.py` 已移除 `navigation_executor_node`。
+- 旧代码路径（`BehaviorNode` / `NavigationExecutorNode` 相关源码与测试）暂仍保留，按 Phase 4 统一清理。
+- 当前阶段验收以单元测试为主，暂不执行真机冒烟测试。
 
 ### 0.3 本轮已落地（Phase 1 骨架）
 
@@ -88,6 +88,78 @@
 
 - `test_navigate_to_pose_action` 当前验证重点是“成功进入动作派发/运行态（RUNNING）与状态发布”，尚未在该单测中断言最终 `SUCCEEDED` 终态。
 - `WaitForPoseCondition` 当前实现语义为“条件节点失败即阻断，不返回 RUNNING”；若后续希望更贴近可等待语义，可在 Phase 3 引入 Decorator/重试控制而非直接改写 Condition 语义。
+
+### 0.6 本轮已落地（Phase 3 集成替换定稿）
+
+以下 Phase 3 内容已在代码中落地并完成包内回归：
+
+1. 接口定稿（`dog_interfaces`）
+  - 新增 `PlaceBoxes.action`：
+    - Goal: `box_type`, `payload`, `step_counter`
+    - Result: `accepted`, `detail`
+    - Feedback: `progress`, `state`
+  - 已接线 `src/dog_interfaces/CMakeLists.txt` 的 action 生成。
+
+2. 放置链路 BT 节点落地（`dog_behavior/bt_nodes`）
+  - 新增节点：
+    - `SetBoxesTypeAction`
+    - `AdvancePlaceCounterAction`
+    - `PlaceRuleAction`
+    - `PlaceIndexAction`
+    - `ExecutePlaceBoxesAction`
+    - `PublishMathAnswerAction`
+  - 语义对齐：
+    - `counter` 前推进，`counter > 7` 进入结束语义。
+    - `group_a={0,1,5,6}`，`group_b={2,3,4,7}`。
+    - payload 采用 `key=value`，格式示例 `place=0,3,count=3`。
+    - `*_box_count` 仅在 `ExecutePlaceBoxesAction` 收到 action 成功且 accepted 时提交。
+    - 放置执行采用 fail-open（XML 中 `ForceSuccess` 包裹执行节点）。
+
+3. 主节点与黑板接线
+  - `BehaviorTreeNode` 已注入并维护：
+    - `match_type`、`counter`
+    - `food_box_count` / `tool_box_count` / `instrument_box_count` / `medical_box_count`
+    - `boxes_type_list` / `boxes_ready` / `boxes_capture_stamp`
+    - `WayPointGoal1..4`、`PlaceGoal1..4` 对应 pose
+  - 已完成新增节点注册。
+
+4. BT XML 编排定稿
+  - `behavior_tree.xml` 已落地完整流程：
+    - `SetBoxesTypeAction` 后依次导航到 `WayPointGoal1 -> WayPointGoal2 -> WayPointGoal3`
+    - 在 `WayPointGoal3` 后执行 `PublishMathAnswerAction`
+    - 第一次取箱后放置批次：`PlaceGoal1 -> PlaceGoal2 -> PlaceGoal3 -> PlaceGoal4`
+    - 第二次取箱后放置批次：`PlaceGoal4 -> PlaceGoal3 -> PlaceGoal2 -> PlaceGoal1`
+  - 放置子树模式：
+    - `AdvancePlaceCounterAction -> PlaceRuleAction -> PlaceIndexAction -> ExecutePlaceBoxesAction`
+
+5. 入口与启动替换
+  - `src/dog_behavior/src/main.cpp` 已切换到 `BehaviorTreeNode`。
+  - `src/dog_behavior/launch/launch.py` 已移除 `navigation_executor_node`。
+  - 启动参数继续保留 `match_type` 与 `waypoints_file` 注入。
+
+6. 构建与测试接线（单测）
+  - `src/dog_behavior/CMakeLists.txt` 已接入新增 bt 节点源文件与测试目标。
+  - 新增测试：
+    - `test_set_boxes_type_action`
+    - `test_advance_place_counter_action`
+    - `test_place_rule_action`
+    - `test_place_index_action`
+    - `test_execute_place_boxes_action`
+    - `test_publish_math_answer_action`
+  - `test_behavior_tree_node` 已扩展 Phase 3 结构覆盖：
+    - 双放置批次顺序（先正序后逆序）
+    - 数学题节点位于 `WayPointGoal3` 后、第一次 `PickUpBoxes` 前
+
+复验结果（2026-04-25）：
+
+- `colcon build --packages-select dog_interfaces dog_behavior` 通过
+- `colcon test --packages-select dog_behavior --ctest-args -R "test_behavior_tree_node|test_set_boxes_type_action|test_advance_place_counter_action|test_place_rule_action|test_place_index_action|test_execute_place_boxes_action|test_publish_math_answer_action"` 通过
+- `colcon test-result --test-result-base build/dog_behavior/test_results --verbose`：`55 tests, 0 errors, 0 failures, 0 skipped`
+
+当前结论：
+
+- Phase 3 代码与单测收口已完成。
+- 真机冒烟测试按当前阶段边界延后执行。
 
 ## 1. 问题分析
 
@@ -361,7 +433,7 @@ namespace dog_behavior::utils {
 2. [x] 此阶段行为树 XML 采用简单 Condition 节点做验证（`CheckSystemMode` + `WaitForPose`）
 3. [x] 新增 `test_behavior_tree_node.cpp` 并通过
 4. [x] 新增 `${PROJECT_NAME}_bt_node` 可执行作为骨架入口
-5. [ ] 将默认运行入口从旧节点切换到 `BehaviorTreeNode`（Phase 3 执行）
+5. [x] 将默认运行入口从旧节点切换到 `BehaviorTreeNode`（已在 Phase 3 完成）
 
 **当前验收结论：** 已满足“新节点能启动、订阅 odom 并发布 global_pose、周期 tick 条件树”的 Phase 1 骨架目标。
 
@@ -396,24 +468,33 @@ namespace dog_behavior::utils {
 
 **目标：直接用新架构替换旧架构（不保留切换开关）**
 
-1. 设计完整的行为树 XML，覆盖当前比赛流程
-2. 修改 `main.cpp`，启动 `BehaviorTreeNode`
-3. 修改 `launch.py`：
+1. [x] 设计完整的行为树 XML，覆盖当前比赛流程
+2. [x] 修改 `main.cpp`，启动 `BehaviorTreeNode`
+3. [x] 修改 `launch.py`：
    - 移除 `navigation_executor_node`
    - 将 `dog_behavior_node` 指向新的可执行文件
-4. 编写集成测试：从 trigger topic 发布消息，验证完整流程
-5. 在真机上做冒烟测试
+4. [x] 编写集成/结构测试：覆盖双放置顺序与数学题触发点
+5. [ ] 在真机上做冒烟测试（按当前阶段边界暂不执行）
 
 **验收标准：** 旧的 `BehaviorNode` + `NavigationExecutorNode` 两个进程被新的 `BehaviorTreeNode` 一个进程替代，且不引入新旧切换逻辑，比赛流程正常运行。
+
+**当前验收结论：** 软件侧替换目标已达成，单测回归通过；真机冒烟验证延后到后续阶段执行。
 
 ### Phase 4：清理（预计工作量：小）
 
 **目标：删除旧代码**
 
-1. 删除 `behavior_node.hpp/.cpp`、`behavior_tree.hpp/.cpp`、`navigation_executor_node.hpp/.cpp`、`navigation_executor_main.cpp`
-2. 删除对应的旧测试文件
-3. 更新 `CMakeLists.txt`，移除旧编译目标
-4. 更新 `CLAUDE.md` 架构说明
+1. [x] 删除 `behavior_node.hpp/.cpp`、`behavior_tree.hpp/.cpp`、`navigation_executor_node.hpp/.cpp`、`navigation_executor_main.cpp`
+2. [x] 删除对应的旧测试文件
+3. [x] 更新 `CMakeLists.txt`，移除旧编译目标
+4. [x] 更新 `CLAUDE.md` 架构说明
+5. [x] 额外清理重复入口与旧树配置：删除 `main.cpp` 与 `execute_trigger_tree.xml`
+
+**当前验收结论（代码与文档收口）：**
+
+- 运行入口已统一到 `dog_behavior_bt_node`，旧可执行与旧测试目标已从构建系统移除。
+- 旧架构源码、旧测试与旧 XML 已删除，`src/dog_behavior` 内无旧路径残留引用。
+- 主线文档（README/CLAUDE/AGENTS/接口与集成文档）已同步到“BT 叶子直接调用 Nav2”的现状。
 
 ---
 

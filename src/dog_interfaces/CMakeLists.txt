@@ -25,6 +25,7 @@ set(srv_files
 
 set(action_files
   "action/ExecuteBehavior.action"
+  "action/PlaceBoxes.action"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

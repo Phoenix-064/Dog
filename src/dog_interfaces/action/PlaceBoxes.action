@@ -1,0 +1,9 @@
+string box_type
+string payload
+int32 step_counter
+---
+bool accepted
+string detail
+---
+float32 progress
+string state

@@ -1,17 +1,91 @@
 <root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="PlaceAtGoal">
+    <Sequence>
+      <NavigateToPoseAction
+        goal="{place_goal}"
+        action_name="/navigate_to_pose"
+        state_topic="/behavior/nav_exec_state"/>
+      <AdvancePlaceCounterAction counter="{counter}" done="{place_done}"/>
+      <PlaceRuleAction
+        match_type="{match_type}"
+        counter="{counter}"
+        target_type="{target_type}"
+        group_indices="{group_indices}"/>
+      <PlaceIndexAction
+        boxes_type_list="{boxes_type_list}"
+        group_indices="{group_indices}"
+        target_type="{target_type}"
+        food_box_count="{food_box_count}"
+        tool_box_count="{tool_box_count}"
+        instrument_box_count="{instrument_box_count}"
+        medical_box_count="{medical_box_count}"
+        local_indices="{local_indices}"
+        payload="{place_payload}"
+        count_after_success="{count_after_success}"
+        has_target="{has_target}"/>
+      <ForceSuccess>
+        <ExecutePlaceBoxesAction
+          box_type="{target_type}"
+          payload="{place_payload}"
+          step_counter="{counter}"
+          has_target="{has_target}"
+          count_after_success="{count_after_success}"
+          match_type="{match_type}"
+          local_indices="{local_indices}"
+          action_name="/behavior/place_boxes"
+          result_code_text="{place_result_code}"/>
+      </ForceSuccess>
+    </Sequence>
+  </BehaviorTree>
+
   <BehaviorTree ID="MainTree">
     <Sequence>
       <CheckSystemMode mode="{system_mode}" expected_mode="normal"/>
       <WaitForPose has_pose="{has_current_pose}" timeout_ms="5000"/>
-      <SelectWaypoint waypoints="{waypoints}" index="{waypoint_index}" target_pose="{target_pose}"/>
-      <ExecuteBehaviorAction
-        behavior_name="{behavior_name}"
-        target_pose="{target_pose}"
-        action_name="/behavior/execute"/>
+
+      <SetBoxesTypeAction/>
+
       <NavigateToPoseAction
-        goal="{target_pose}"
+        goal="{WayPointGoal1}"
         action_name="/navigate_to_pose"
         state_topic="/behavior/nav_exec_state"/>
+      <NavigateToPoseAction
+        goal="{WayPointGoal2}"
+        action_name="/navigate_to_pose"
+        state_topic="/behavior/nav_exec_state"/>
+      <NavigateToPoseAction
+        goal="{WayPointGoal3}"
+        action_name="/navigate_to_pose"
+        state_topic="/behavior/nav_exec_state"/>
+
+      <PublishMathAnswerAction
+        waypoint_name="WayPointGoal3"
+        required_waypoint_name="WayPointGoal3"/>
+
+      <ExecuteBehaviorAction
+        behavior_name="PickUpBoxes"
+        target_pose="{current_pose}"
+        action_name="/behavior/execute"/>
+
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal1}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal2}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal3}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal4}"/>
+
+      <NavigateToPoseAction
+        goal="{WayPointGoal4}"
+        action_name="/navigate_to_pose"
+        state_topic="/behavior/nav_exec_state"/>
+
+      <ExecuteBehaviorAction
+        behavior_name="PickUpBoxes"
+        target_pose="{current_pose}"
+        action_name="/behavior/execute"/>
+
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal4}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal3}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal2}"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal1}"/>
     </Sequence>
   </BehaviorTree>
 </root>
