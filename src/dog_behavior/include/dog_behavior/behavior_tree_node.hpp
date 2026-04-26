@@ -46,6 +46,7 @@ private:
   void recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void loadWaypoints(const std::string & file_path);
 
+  std::string goal_frame_id_;
   std::string default_frame_id_;
   std::string execute_behavior_trigger_topic_;
   std::string recovery_context_topic_;

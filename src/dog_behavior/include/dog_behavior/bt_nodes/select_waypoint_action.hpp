@@ -20,7 +20,7 @@ public:
   BT::NodeStatus tick() override;
 
 private:
-  geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint) const;
+  geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint, const std::string & frame_id) const;
 };
 
 }  // namespace dog_behavior::bt_nodes

@@ -1,12 +1,42 @@
 # waypoints_right.yaml
 waypoints:
-  - name: "point_c"
-    x: 5.0
-    y: 6.0
-    z: 0.0
-    yaw: -1.57
-  - name: "point_d"
-    x: 7.0
-    y: 8.0
+  - name: "waypoint_goal_1"
+    x: 0.8
+    y: -0.3
     z: 0.0
     yaw: 0.0
+  - name: "waypoint_goal_2"
+    x: 2.0
+    y: -0.8
+    z: 0.0
+    yaw: -0.35
+  - name: "waypoint_goal_3"
+    x: 3.4
+    y: -1.2
+    z: 0.0
+    yaw: -0.52
+  - name: "place_goal_1"
+    x: 4.2
+    y: -2.0
+    z: 0.0
+    yaw: -1.57
+  - name: "place_goal_2"
+    x: 3.8
+    y: -3.1
+    z: 0.0
+    yaw: -3.14
+  - name: "place_goal_3"
+    x: 2.7
+    y: -3.3
+    z: 0.0
+    yaw: 2.62
+  - name: "place_goal_4"
+    x: 1.6
+    y: -2.2
+    z: 0.0
+    yaw: 1.57
+  - name: "waypoint_goal_4"
+    x: 0.7
+    y: -0.6
+    z: 0.0
+    yaw: 0.35

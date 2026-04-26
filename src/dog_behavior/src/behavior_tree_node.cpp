@@ -50,10 +50,10 @@ std::string nodeStatusToString(const BT::NodeStatus status)
   }
 }
 
-geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint)
+geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint, const std::string & frame_id)
 {
   geometry_msgs::msg::PoseStamped pose;
-  pose.header.frame_id = "map";
+  pose.header.frame_id = frame_id;
   pose.pose.position.x = waypoint.x;
   pose.pose.position.y = waypoint.y;
   pose.pose.position.z = waypoint.z;
@@ -64,10 +64,10 @@ geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint)
   return pose;
 }
 
-geometry_msgs::msg::PoseStamped defaultGoalPose()
+geometry_msgs::msg::PoseStamped defaultGoalPose(const std::string & frame_id)
 {
   geometry_msgs::msg::PoseStamped pose;
-  pose.header.frame_id = "map";
+  pose.header.frame_id = frame_id;
   pose.pose.orientation.w = 1.0;
   return pose;
 }
@@ -90,7 +90,8 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 , last_tick_status_("idle")
 {
   const auto global_pose_topic = declare_parameter<std::string>("global_pose_topic", "/dog/global_pose");
-  const auto localization_topic = declare_parameter<std::string>("localization_topic", "/localization/dog");
+  const auto localization_topic = declare_parameter<std::string>("localization_topic", "/aft_mapped_to_init");
+  goal_frame_id_ = declare_parameter<std::string>("goal_frame_id", "map");
   default_frame_id_ = declare_parameter<std::string>("default_frame_id", "base_link");
   execute_behavior_trigger_topic_ = declare_parameter<std::string>(
     "execute_behavior_trigger_topic",
@@ -115,6 +116,12 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 
   if (!waypoints_file.empty()) {
     loadWaypoints(waypoints_file);
+  }
+  if (waypoints_.size() < 8U) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Loaded only %zu waypoints. Behavior tree expects at least 8 and will fallback to defaultGoalPose for missing indices.",
+      waypoints_.size());
   }
 
   auto pose_qos = rclcpp::QoS(rclcpp::KeepLast(20));
@@ -166,9 +173,9 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 
   auto set_goal_pose = [this](const std::string & key, const size_t index) {
       if (index < waypoints_.size()) {
-        blackboard_->set(key, waypointToPose(waypoints_[index]));
+        blackboard_->set(key, waypointToPose(waypoints_[index], goal_frame_id_));
       } else {
-        blackboard_->set(key, defaultGoalPose());
+        blackboard_->set(key, defaultGoalPose(goal_frame_id_));
       }
     };
   set_goal_pose("WayPointGoal1", 0);
@@ -189,11 +196,12 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     get_logger(),
-    "BehaviorTreeNode initialized, localization_topic=%s, global_pose_topic=%s, trigger_topic=%s, tick_period_ms=%d, waypoints=%zu",
+    "BehaviorTreeNode initialized, localization_topic=%s, global_pose_topic=%s, trigger_topic=%s, tick_period_ms=%d, goal_frame_id=%s, waypoints=%zu",
     localization_topic.c_str(),
     global_pose_topic.c_str(),
     execute_behavior_trigger_topic_.c_str(),
     tick_period_ms_,
+    goal_frame_id_.c_str(),
     waypoints_.size());
 }
 

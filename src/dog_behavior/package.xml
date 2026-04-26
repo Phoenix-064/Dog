@@ -18,6 +18,8 @@
   <depend>std_msgs</depend>
   <depend>dog_interfaces</depend>
   <depend>yaml-cpp</depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

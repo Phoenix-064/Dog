@@ -36,12 +36,9 @@ BT::NodeStatus SelectWaypointAction::tick()
   }
 
   const int bounded_index = index % static_cast<int>(waypoints_input->size());
-  auto target_pose = waypointToPose(waypoints_input.value().at(static_cast<size_t>(bounded_index)));
-
   const auto frame_id = getInput<std::string>("frame_id");
-  if (frame_id && !frame_id->empty()) {
-    target_pose.header.frame_id = frame_id.value();
-  }
+  const std::string target_frame = (frame_id && !frame_id->empty()) ? frame_id.value() : "map";
+  auto target_pose = waypointToPose(waypoints_input.value().at(static_cast<size_t>(bounded_index)), target_frame);
 
   if (!utils::isFinitePose(target_pose) || !utils::hasValidQuaternionNorm(target_pose)) {
     return BT::NodeStatus::FAILURE;
@@ -52,10 +49,12 @@ BT::NodeStatus SelectWaypointAction::tick()
   return BT::NodeStatus::SUCCESS;
 }
 
-geometry_msgs::msg::PoseStamped SelectWaypointAction::waypointToPose(const Waypoint & waypoint) const
+geometry_msgs::msg::PoseStamped SelectWaypointAction::waypointToPose(
+  const Waypoint & waypoint,
+  const std::string & frame_id) const
 {
   geometry_msgs::msg::PoseStamped pose;
-  pose.header.frame_id = "map";
+  pose.header.frame_id = frame_id;
   pose.pose.position.x = waypoint.x;
   pose.pose.position.y = waypoint.y;
   pose.pose.position.z = waypoint.z;
