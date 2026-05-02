@@ -4,6 +4,10 @@ project(dog_perception)
 # colcon uses per-package build directories, so export compile commands here.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands for IDE tooling" FORCE)
 
+# Make language standard explicit for both compiler and clangd.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

@@ -75,3 +75,6 @@ frames_*.pdf
 
 # Cache
 .cache/
+
+# clangd
+.clangd
