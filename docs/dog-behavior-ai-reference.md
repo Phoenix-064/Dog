@@ -34,7 +34,7 @@ flowchart TD
   O[ExecuteBehaviorAction] --> P[/behavior/execute Action Client]
   Q[NavigateToPoseAction] --> R[/navigate_to_pose Action Client]
   Q --> S[/behavior/nav_exec_state Topic]
-  T[SetBoxesTypeAction] --> U[/target/box_result Topic]
+  T[SetBoxesTypeAction] --> U[/target/target_3d Topic]
   V[ExecutePlaceBoxesAction] --> W[/behavior/place_boxes Action Client]
   X[PublishMathAnswerAction] --> Y[/math_answer Topic]
 ```
@@ -147,7 +147,7 @@ flowchart TD
 
 1. `ExecuteBehaviorAction`：调用 `/behavior/execute`（`dog_interfaces/action/ExecuteBehavior`）。
 2. `NavigateToPoseAction`：调用 `/navigate_to_pose`（`nav2_msgs/action/NavigateToPose`）并发布 `/behavior/nav_exec_state`。
-3. `SetBoxesTypeAction`：订阅 `/target/box_result`，按“两排排序”生成 `boxes_type_list`。
+3. `SetBoxesTypeAction`：订阅 `/target/target_3d`，按“两排排序”生成 `boxes_type_list`。
 4. `AdvancePlaceCounterAction`：推进 `counter`，`counter > 7` 输出 `done=true`。
 5. `PlaceRuleAction`：根据 `match_type + counter` 生成 `target_type` 与 `group_indices`。
 6. `PlaceIndexAction`：生成 `local_indices`、`payload`、`count_after_success`、`has_target`。
@@ -204,7 +204,7 @@ Action Client：
 Topic：
 
 1. `NavigateToPoseAction` 发布 `/behavior/nav_exec_state`（`std_msgs/msg/String`）
-2. `SetBoxesTypeAction` 订阅 `/target/box_result`（`dog_interfaces/msg/Target3DArray`）
+2. `SetBoxesTypeAction` 订阅 `/target/target_3d`（`dog_interfaces/msg/Target3DArray`）
 3. `PublishMathAnswerAction` 发布 `/math_answer`（`std_msgs/msg/String`）
 
 说明：

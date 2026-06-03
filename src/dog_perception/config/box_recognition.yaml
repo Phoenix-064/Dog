@@ -1,6 +1,6 @@
 dog_box_detector:
   ros__parameters:
-    image_topic: "/camera/image_raw"
+    image_topic: "/camera/image_raw"1
     box_result_topic: "/target/box_result"
     box_yolo_model_path: "boxes_detector.pt"
     box_confidence_threshold: 0.35

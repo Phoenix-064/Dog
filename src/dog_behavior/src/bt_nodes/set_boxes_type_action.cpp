@@ -67,7 +67,7 @@ bool SetBoxesTypeAction::ensureSubscription()
   }
 
   subscription_ = node_->create_subscription<dog_interfaces::msg::Target3DArray>(
-    "/target/box_result",
+    "/target/target_3d",
     rclcpp::QoS(10),
     [this](const dog_interfaces::msg::Target3DArray::ConstSharedPtr msg) {
       this->boxesCallback(msg);

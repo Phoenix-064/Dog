@@ -69,7 +69,7 @@ TEST_F(SetBoxesTypeActionNodeTest, SortsBoxesAndCachesResult)
   auto io_node = std::make_shared<rclcpp::Node>("bt_set_boxes_type_io");
 
   auto pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
-    "/target/box_result",
+    "/target/target_3d",
     rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -96,7 +96,7 @@ TEST_F(SetBoxesTypeActionNodeTest, SortsBoxesAndCachesResult)
     executor,
     std::chrono::milliseconds(1000),
     [&io_node]() {
-      return io_node->count_subscribers("/target/box_result") > 0u;
+      return io_node->count_subscribers("/target/target_3d") > 0u;
     }));
 
   dog_interfaces::msg::Target3DArray boxes;
