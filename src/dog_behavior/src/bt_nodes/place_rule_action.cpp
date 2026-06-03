@@ -9,8 +9,8 @@ namespace dog_behavior::bt_nodes
 
 namespace
 {
-const std::array<int, 4> kGroupA{0, 1, 5, 6};
-const std::array<int, 4> kGroupB{2, 3, 4, 7};
+const std::array<int, 4> kGroupA{0, 1, 5, 4};
+const std::array<int, 4> kGroupB{2, 3, 7, 6};
 const std::array<const char *, 8> kLeftTypes{
   "food", "tool", "instrument", "medical", "medical", "instrument", "tool", "food"};
 const std::array<const char *, 8> kRightTypes{
