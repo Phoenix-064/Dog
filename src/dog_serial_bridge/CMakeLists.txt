@@ -13,10 +13,12 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
 
 add_library(${PROJECT_NAME}_lib
   src/serial_bridge_node.cpp
+  src/nav_telemetry_serial_node.cpp
   src/serial_protocol.cpp
   src/system_serial_connection.cpp
 )
@@ -28,15 +30,20 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   rclcpp
   rclcpp_action
   std_msgs
+  geometry_msgs
   dog_interfaces
 )
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
 
+add_executable(${PROJECT_NAME}_nav_telemetry_node src/nav_telemetry_main.cpp)
+target_link_libraries(${PROJECT_NAME}_nav_telemetry_node ${PROJECT_NAME}_lib)
+
 install(TARGETS
   ${PROJECT_NAME}_lib
   ${PROJECT_NAME}_node
+  ${PROJECT_NAME}_nav_telemetry_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -64,9 +71,21 @@ if(BUILD_TESTING)
       rclcpp
       rclcpp_action
       std_msgs
+      geometry_msgs
       dog_interfaces
     )
     set_tests_properties(test_serial_bridge_node
+      PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
+  endif()
+
+  ament_add_gtest(test_nav_telemetry_serial_node test/test_nav_telemetry_serial_node.cpp)
+  if(TARGET test_nav_telemetry_serial_node)
+    target_link_libraries(test_nav_telemetry_serial_node ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_nav_telemetry_serial_node
+      rclcpp
+      geometry_msgs
+    )
+    set_tests_properties(test_nav_telemetry_serial_node
       PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 endif()

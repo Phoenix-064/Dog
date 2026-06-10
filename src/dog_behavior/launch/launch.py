@@ -6,6 +6,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _create_optional_third_party_actions(context, *args, **kwargs):
@@ -89,6 +90,10 @@ def generate_launch_description() -> LaunchDescription:
     # Bring up all first-party and third-party runtime components from one entrypoint.
     use_point_lio_rviz = LaunchConfiguration("use_point_lio_rviz")
     use_perception_camera = LaunchConfiguration("use_perception_camera")
+    use_nav_telemetry_serial = LaunchConfiguration("use_nav_telemetry_serial")
+    nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
+    nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
+    nav_telemetry_period_ms = LaunchConfiguration("nav_telemetry_period_ms")
     map_to_camera_x = LaunchConfiguration("map_to_camera_x")
     map_to_camera_y = LaunchConfiguration("map_to_camera_y")
     map_to_camera_z = LaunchConfiguration("map_to_camera_z")
@@ -143,6 +148,30 @@ def generate_launch_description() -> LaunchDescription:
         "goal_frame_id",
         default_value="map",
         description="Frame id for behavior tree navigation goals.",
+    )
+
+    declare_use_nav_telemetry_serial = DeclareLaunchArgument(
+        "use_nav_telemetry_serial",
+        default_value="false",
+        description="Whether to start the independent navigation telemetry serial node.",
+    )
+
+    declare_nav_telemetry_serial_port = DeclareLaunchArgument(
+        "nav_telemetry_serial_port",
+        default_value="/dev/ttyUSB1",
+        description="Serial port for navigation pose telemetry.",
+    )
+
+    declare_nav_telemetry_baud_rate = DeclareLaunchArgument(
+        "nav_telemetry_baud_rate",
+        default_value="115200",
+        description="Baud rate for navigation pose telemetry serial port.",
+    )
+
+    declare_nav_telemetry_period_ms = DeclareLaunchArgument(
+        "nav_telemetry_period_ms",
+        default_value="100",
+        description="Navigation pose telemetry publish period in milliseconds.",
     )
 
     declare_map_to_camera_x = DeclareLaunchArgument(
@@ -212,6 +241,19 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
+    nav_telemetry_serial_node = Node(
+        package="dog_serial_bridge",
+        executable="dog_serial_bridge_nav_telemetry_node",
+        name="dog_serial_bridge_nav_telemetry",
+        output="screen",
+        condition=IfCondition(use_nav_telemetry_serial),
+        parameters=[{
+            "serial_port": nav_telemetry_serial_port,
+            "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
+            "publish_period_ms": ParameterValue(nav_telemetry_period_ms, value_type=int),
+        }],
+    )
+
     static_map_camera_tf = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
@@ -240,6 +282,10 @@ def generate_launch_description() -> LaunchDescription:
         declare_use_nav2,
         declare_nav2_params_file,
         declare_goal_frame_id,
+        declare_use_nav_telemetry_serial,
+        declare_nav_telemetry_serial_port,
+        declare_nav_telemetry_baud_rate,
+        declare_nav_telemetry_period_ms,
         declare_map_to_camera_x,
         declare_map_to_camera_y,
         declare_map_to_camera_z,
@@ -251,6 +297,7 @@ def generate_launch_description() -> LaunchDescription:
         perception_node,
         perception_camera_node,
         lifecycle_node,
+        nav_telemetry_serial_node,
         static_map_camera_tf,
         behavior_node,
     ])

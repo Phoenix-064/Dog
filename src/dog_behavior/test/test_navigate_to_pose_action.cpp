@@ -87,6 +87,7 @@ TEST_F(NavigateToPoseActionNodeTest, ReturnsSuccessAfterNav2Completes)
 {
   const std::string action_name = "/test/bt/navigate_to_pose";
   const std::string state_topic = "/test/bt/nav_exec_state";
+  const std::string goal_topic = "/test/bt/nav_goal";
 
   auto server = std::make_shared<MockNav2Server>(action_name);
   auto bt_node = std::make_shared<rclcpp::Node>("bt_navigate_test_node");
@@ -113,11 +114,22 @@ TEST_F(NavigateToPoseActionNodeTest, ReturnsSuccessAfterNav2Completes)
     [&last_state](const std_msgs::msg::String::ConstSharedPtr msg) {
       last_state = msg->data;
     });
+  bool goal_received = false;
+  geometry_msgs::msg::PoseStamped published_goal;
+  auto goal_sub = bt_node->create_subscription<geometry_msgs::msg::PoseStamped>(
+    goal_topic,
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
+    [&goal_received, &published_goal](const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
+      if (msg) {
+        goal_received = true;
+        published_goal = *msg;
+      }
+    });
 
   const std::string xml =
     "<root main_tree_to_execute=\"Main\">"
     "  <BehaviorTree ID=\"Main\">"
-    "    <NavigateToPoseAction goal=\"{goal}\" action_name=\"/test/bt/navigate_to_pose\" state_topic=\"/test/bt/nav_exec_state\"/>"
+    "    <NavigateToPoseAction goal=\"{goal}\" action_name=\"/test/bt/navigate_to_pose\" state_topic=\"/test/bt/nav_exec_state\" goal_topic=\"/test/bt/nav_goal\"/>"
     "  </BehaviorTree>"
     "</root>";
 
@@ -128,7 +140,10 @@ TEST_F(NavigateToPoseActionNodeTest, ReturnsSuccessAfterNav2Completes)
   while (std::chrono::steady_clock::now() < deadline) {
     executor.spin_some();
     status = tree.tickRoot();
-    if (status == BT::NodeStatus::RUNNING && (last_state == "forwarding_goal" || last_state == "running")) {
+    if (status == BT::NodeStatus::RUNNING &&
+      goal_received &&
+      (last_state == "forwarding_goal" || last_state == "running"))
+    {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -136,8 +151,12 @@ TEST_F(NavigateToPoseActionNodeTest, ReturnsSuccessAfterNav2Completes)
 
   EXPECT_EQ(status, BT::NodeStatus::RUNNING);
   EXPECT_TRUE(last_state == "forwarding_goal" || last_state == "running");
+  ASSERT_TRUE(goal_received);
+  EXPECT_EQ(published_goal.header.frame_id, "map");
+  EXPECT_DOUBLE_EQ(published_goal.pose.orientation.w, 1.0);
 
   executor.remove_node(bt_node);
   executor.remove_node(server);
   (void)state_sub;
+  (void)goal_sub;
 }

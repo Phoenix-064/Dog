@@ -14,7 +14,10 @@
 
 包路径：[src/dog_serial_bridge](../src/dog_serial_bridge)
 
-`dog_serial_bridge` 是 `dog_behavior` 与下位机 MCU 串口协议之间的桥接层。它保持上层行为包已使用的 Action 接口不变，同时将请求转换为 `RC...` 串口帧，并把下位机回包转换为 Action result 与 lifecycle 兼容抓取反馈。
+`dog_serial_bridge` 是 `dog_behavior` 与下位机 MCU 串口协议之间的桥接层。它包含两类独立串口链路：
+
+1. 命令事务链路：保持上层行为包已使用的 Action 接口不变，将抓取/放置请求转换为 `RC...` 串口帧，并把下位机回包转换为 Action result 与 lifecycle 兼容抓取反馈。
+2. 导航遥测链路：独立串口周期发送当前位置和当前导航目标位置，不等待 ACK，不发送导航状态。
 
 核心文件：
 
@@ -25,7 +28,10 @@
 5. 系统串口实现：[src/dog_serial_bridge/src/system_serial_connection.cpp](../src/dog_serial_bridge/src/system_serial_connection.cpp)
 6. 协议工具头文件：[src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp](../src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp)
 7. 协议工具实现：[src/dog_serial_bridge/src/serial_protocol.cpp](../src/dog_serial_bridge/src/serial_protocol.cpp)
-8. 进程入口：[src/dog_serial_bridge/src/main.cpp](../src/dog_serial_bridge/src/main.cpp)
+8. 命令事务节点入口：[src/dog_serial_bridge/src/main.cpp](../src/dog_serial_bridge/src/main.cpp)
+9. 导航遥测节点头文件：[src/dog_serial_bridge/include/dog_serial_bridge/nav_telemetry_serial_node.hpp](../src/dog_serial_bridge/include/dog_serial_bridge/nav_telemetry_serial_node.hpp)
+10. 导航遥测节点实现：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp)
+11. 导航遥测节点入口：[src/dog_serial_bridge/src/nav_telemetry_main.cpp](../src/dog_serial_bridge/src/nav_telemetry_main.cpp)
 
 构建入口：
 
@@ -36,6 +42,7 @@
 
 1. 协议单元测试：[src/dog_serial_bridge/test/test_serial_protocol.cpp](../src/dog_serial_bridge/test/test_serial_protocol.cpp)
 2. Action 桥接集成测试：[src/dog_serial_bridge/test/test_serial_bridge_node.cpp](../src/dog_serial_bridge/test/test_serial_bridge_node.cpp)
+3. 导航遥测串口测试：[src/dog_serial_bridge/test/test_nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/test/test_nav_telemetry_serial_node.cpp)
 
 ---
 
@@ -46,6 +53,12 @@
 1. 抓取动作桥接：接收 `/behavior/execute` 的 `PickUpBoxes` goal，发送 `RCPickUpBoxes`，等待抓取成功或失败回包。
 2. 放置动作桥接：接收 `/behavior/place_boxes` 的 `place=...,count=...` payload，发送 `RC` + payload，等待 `RCOK` 回包。
 3. lifecycle 兼容反馈：抓取成功或空抓时发布 `/behavior/grasp_feedback`，格式为 `pickup_<seq>|success` 或 `pickup_<seq>|empty_grasp`。
+
+`NavTelemetrySerialNode` 在运行时承担一条独立链路：
+
+1. 订阅 `/dog/global_pose` 获取当前位置。
+2. 订阅 `/behavior/nav_goal` 获取最近一次行为树下发给 Nav2 的目标位置。
+3. 通过独立串口周期发送 `RCNAV` 遥测帧，帧中只包含当前位置和目标位置，不包含导航状态。
 
 数据主链路：
 
@@ -62,6 +75,10 @@ flowchart TD
   E --> H[Action Result]
   E --> I[/behavior/grasp_feedback]
   I --> J[dog_lifecycle]
+  K[/dog/global_pose] --> L[NavTelemetrySerialNode]
+  M[/behavior/nav_goal] --> L
+  L --> N[Navigation Telemetry SerialConnection]
+  N --> O[MCU Navigation Telemetry Parser]
 ```
 
 ---
@@ -91,9 +108,18 @@ flowchart TD
 
 该 topic 由 `dog_lifecycle` 消费，用于空抓熔断与生命周期降级逻辑。
 
-### 3.3 ROS 参数
+### 3.3 Topic Subscriber
 
-参数声明入口：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L78](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L78)
+`NavTelemetrySerialNode` 订阅：
+
+1. `/dog/global_pose`：类型为 `geometry_msgs/msg/PoseStamped`，来自 `dog_behavior` 当前全局位姿发布。
+2. `/behavior/nav_goal`：类型为 `geometry_msgs/msg/PoseStamped`，来自 `dog_behavior::bt_nodes::NavigateToPoseAction`，表示最近一次真正下发给 Nav2 的目标位姿。
+
+注意：`/behavior/nav_exec_state` 不参与导航遥测串口，当前方案不发送导航状态。
+
+### 3.4 ROS 参数
+
+`SerialBridgeNode` 参数声明入口：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L78](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L78)
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -104,11 +130,60 @@ flowchart TD
 | `write_newline` | `true` | 写串口帧时是否追加 `\n` |
 | `read_line_delimiter` | `\\n` | 读串口回包的行分隔符 |
 
+`NavTelemetrySerialNode` 参数声明入口：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp)
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `serial_port` | `/dev/ttyUSB1` | 导航遥测串口设备路径 |
+| `baud_rate` | `115200` | 导航遥测串口波特率 |
+| `publish_period_ms` | `100` | 周期发送间隔，默认 10Hz |
+| `reconnect_period_ms` | `1000` | 串口打开或写入失败后的重连间隔 |
+| `write_newline` | `true` | 写串口帧时是否追加 `\n` |
+| `read_line_delimiter` | `\\n` | 复用 `SerialConfig` 字段；导航遥测节点不读回包 |
+| `current_pose_topic` | `/dog/global_pose` | 当前位置订阅 topic |
+| `goal_pose_topic` | `/behavior/nav_goal` | 当前目标订阅 topic |
+
+launch 入口由 `dog_behavior/launch/launch.py` 提供，可选启用：
+
+```bash
+ros2 launch dog_behavior launch.py use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
+```
+
 ---
 
 ## 4. 串口协议映射
 
 协议常量定义：[src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp](../src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp)
+
+### 4.0 标准帧格式
+
+当前串口协议采用一行一帧的 ASCII 文本格式：
+
+```text
+<开始帧/命令前缀><payload><结束帧>
+```
+
+字段约定：
+
+| 部分 | 当前约定 | 说明 |
+| --- | --- | --- |
+| 开始帧/命令前缀 | `RC` | 所有发往 MCU 的业务帧均以 `RC` 开头 |
+| payload | 业务字段 | 抓取、放置、导航遥测各自定义 |
+| 结束帧 | `\n` | 默认由 `write_newline=true` 追加，MCU 可按换行切包 |
+
+标准示例：
+
+```text
+RCPickUpBoxes\n
+RCplace=0,3,count=3\n
+RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=1.230;cur_y=0.420;cur_z=0.000;cur_yaw=0.000;goal_valid=1;goal_frame=map;goal_x=3.000;goal_y=2.000;goal_z=0.000;goal_yaw=0.000\n
+```
+
+注意：
+
+1. 文档中的 `\n` 表示单个换行字节，不是两个字符反斜杠和 n。
+2. 如果 `write_newline=false`，节点不会自动追加结束帧；实际联调建议保持默认 `true`。
+3. `read_line_delimiter` 只用于读取 MCU 回包；导航遥测节点只写不读，但仍复用 `SerialConfig` 字段。
 
 ### 4.1 抓取命令
 
@@ -121,7 +196,7 @@ flowchart TD
 串口发送：
 
 ```text
-RCPickUpBoxes
+RCPickUpBoxes\n
 ```
 
 回包映射：
@@ -151,7 +226,7 @@ state = waiting_pick_result
 串口发送：
 
 ```text
-RCplace=0,3,count=3
+RCplace=0,3,count=3\n
 ```
 
 回包映射：
@@ -169,6 +244,43 @@ progress = 0.5
 state = waiting_place_ack
 ```
 
+### 4.3 导航遥测帧
+
+上层输入：
+
+```text
+/dog/global_pose        geometry_msgs/msg/PoseStamped
+/behavior/nav_goal      geometry_msgs/msg/PoseStamped
+```
+
+串口周期发送：
+
+```text
+RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=1.230;cur_y=0.420;cur_z=0.000;cur_yaw=0.000;goal_valid=1;goal_frame=map;goal_x=3.000;goal_y=2.000;goal_z=0.000;goal_yaw=0.000\n
+```
+
+字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `seq` | 节点本地递增序号 |
+| `stamp_ms` | ROS 当前时间毫秒 |
+| `cur_valid` | 是否已有合法当前位置 |
+| `cur_frame` | 当前位置 frame id，非法字符会替换为 `_` |
+| `cur_x/cur_y/cur_z` | 当前三维位置，单位米 |
+| `cur_yaw` | 当前 yaw，单位弧度 |
+| `goal_valid` | 是否已有合法导航目标 |
+| `goal_frame` | 目标 frame id，非法字符会替换为 `_` |
+| `goal_x/goal_y/goal_z` | 目标三维位置，单位米 |
+| `goal_yaw` | 目标 yaw，单位弧度 |
+
+约束：
+
+1. 遥测帧不等待 MCU ACK。
+2. 遥测帧不包含 `state`、`goal_active` 或 `/behavior/nav_exec_state` 数据。
+3. 未收到当前位置时 `cur_valid=0`，未收到目标时 `goal_valid=0`，对应坐标填 `0.000`，frame 填 `unknown`。
+4. 接收到非有限数值或四元数范数非法的 pose 时丢弃该输入，并保留上一帧有效缓存。
+
 ---
 
 ## 5. 函数调用结构（可检索）
@@ -184,6 +296,14 @@ state = waiting_place_ack
 5. 创建 `/behavior/place_boxes` Action Server：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L52](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L52)
 6. 创建周期 feedback timer：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L59](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L59)
 7. 打开串口并启动 reader thread：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L115](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L115)
+
+导航遥测入口链路：
+
+1. main 创建 `NavTelemetrySerialNode` 并 spin：[src/dog_serial_bridge/src/nav_telemetry_main.cpp](../src/dog_serial_bridge/src/nav_telemetry_main.cpp)
+2. 构造函数声明并读取参数：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp)
+3. 创建 `/dog/global_pose` 与 `/behavior/nav_goal` subscriber。
+4. 打开独立串口。
+5. 创建周期 timer，按 `publish_period_ms` 组帧并写串口。
 
 ```mermaid
 flowchart TD
@@ -260,6 +380,31 @@ flowchart TD
 4. `waitForTransaction()` 使用 condition variable 等待回包、取消、串口错误或 deadline 超时。
 5. `clearActiveTransactionLocked()` 在事务结束后释放 active transaction。
 
+### 5.5 导航遥测发送链
+
+关键入口：
+
+1. 当前位置缓存：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp) 的 `currentPoseCallback()`
+2. 目标位置缓存：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp) 的 `goalPoseCallback()`
+3. 周期发送：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp) 的 `publishTimerCallback()`
+4. 串口重连：[src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp](../src/dog_serial_bridge/src/nav_telemetry_serial_node.cpp) 的 `maybeReconnect()`
+
+```mermaid
+flowchart TD
+  A[/dog/global_pose] --> B[currentPoseCallback]
+  C[/behavior/nav_goal] --> D[goalPoseCallback]
+  B --> E[pose cache]
+  D --> E
+  F[publish timer] --> G{serial ready?}
+  G -->|no| H[maybeReconnect]
+  G -->|yes| I[build RCNAV frame]
+  H --> I
+  I --> J[write serial]
+  J -->|write failed| K[mark not ready]
+```
+
+遥测链路不启动 reader thread，不消费 MCU 回包，不修改 `SerialBridgeNode` 的 active transaction。
+
 ---
 
 ## 6. 串口访问抽象
@@ -274,7 +419,7 @@ flowchart TD
 2. 提供 `open()`、`isOpen()`、`close()`、`write()`、`readLine()`。
 3. `readLine()` 返回 `kLine`、`kTimeout`、`kClosed` 或 `kError`。
 
-测试中通过 `FakeSerialConnection` 注入节点，避免依赖真实硬件。
+测试中通过 `FakeSerialConnection` 注入 `SerialBridgeNode` 和 `NavTelemetrySerialNode`，避免依赖真实硬件。
 
 ### 6.2 SystemSerialConnection
 
@@ -325,14 +470,16 @@ colcon test-result --verbose
 
 1. `test_serial_protocol`：8 个协议单元测试。
 2. `test_serial_bridge_node`：10 个 Action 桥接测试。
-3. 覆盖抓取成功、空抓、超时、busy reject、unsupported reject、serial_not_ready abort。
-4. 覆盖放置成功、超时、busy reject、非法 payload reject、无关回包忽略。
-5. 覆盖 Action feedback 心跳与 lifecycle grasp feedback 发布。
+3. `test_nav_telemetry_serial_node`：2 个导航遥测串口测试。
+4. 覆盖抓取成功、空抓、超时、busy reject、unsupported reject、serial_not_ready abort。
+5. 覆盖放置成功、超时、busy reject、非法 payload reject、无关回包忽略。
+6. 覆盖 Action feedback 心跳与 lifecycle grasp feedback 发布。
+7. 覆盖导航遥测帧包含 current/goal pose，且不包含导航状态字段。
 
 CMake 测试注意事项：
 
-1. `test_serial_bridge_node` 使用 ROS 2 日志。
-2. 为避免当前环境中 `/home/ywj/.ros/log` 不可写，CMake 已为该测试设置 `ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros_log`。
+1. `test_serial_bridge_node` 和 `test_nav_telemetry_serial_node` 使用 ROS 2 日志。
+2. 为避免当前环境中用户 home 下 `.ros/log` 不可写，CMake 已为相关测试设置 `ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros_log`。
 
 ---
 
@@ -346,6 +493,8 @@ CMake 测试注意事项：
 4. 修改并发/超时逻辑时，重点检查 `reserveTransactionSlot()`、`begin*Transaction()`、`waitForTransaction()` 与 `feedbackTimerCallback()`。
 5. 修改真实串口实现时，保留 `SerialConnection` 抽象，确保测试仍可用 fake 串口无硬件运行。
 6. 增加新 MCU 回包时，必须明确其只对哪类 transaction 生效，避免不同 Action 互相误消费回包。
+7. 导航遥测链路应保持独立串口、只写不读、不等待 ACK；不要把 10Hz 位姿流混入 `SerialBridgeNode` 的单事务串口。
+8. 导航遥测目标来源是 `/behavior/nav_goal`，该 topic 由 `dog_behavior::bt_nodes::NavigateToPoseAction` 在下发 Nav2 goal 时发布；不要依赖 ROS action hidden topic。
 
 ---
 
@@ -356,3 +505,5 @@ CMake 测试注意事项：
 3. 当前单串口单事务模型会拒绝并发 goal；如果未来需要队列化，需要重新设计事务队列与取消语义。
 4. 当前 `SystemSerialConnection` 支持的波特率有限；新增波特率需要扩展 `toBaudRate()`。
 5. Windows 分支不提供真实串口访问，仅用于非 Linux 平台构建安全降级。
+6. 导航遥测节点默认使用 `/dev/ttyUSB1`，需要现场确认与抓取/放置串口 `/dev/ttyUSB0` 不冲突。
+7. 导航遥测串口不发送导航状态；MCU 如需判断是否到达目标，需要后续新增明确字段或单独状态链路。

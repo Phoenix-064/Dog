@@ -81,6 +81,10 @@ install(DIRECTORY config/
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
+  set(TEST_ROS_LOG_DIR "${CMAKE_CURRENT_BINARY_DIR}/ros_log")
+  file(MAKE_DIRECTORY "${TEST_ROS_LOG_DIR}")
+
   ament_add_gtest(test_payload_utils test/test_payload_utils.cpp)
   if(TARGET test_payload_utils)
     target_link_libraries(test_payload_utils ${PROJECT_NAME}_lib)
@@ -152,6 +156,8 @@ if(BUILD_TESTING)
       geometry_msgs
       std_msgs
     )
+    set_tests_properties(test_navigate_to_pose_action
+      PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 
   ament_add_gtest(test_set_boxes_type_action test/test_set_boxes_type_action.cpp)

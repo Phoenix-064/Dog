@@ -24,6 +24,7 @@ BT::PortsList NavigateToPoseAction::providedPorts()
     BT::InputPort<geometry_msgs::msg::PoseStamped>("goal"),
     BT::InputPort<std::string>("action_name", "/navigate_to_pose"),
     BT::InputPort<std::string>("state_topic", "/behavior/nav_exec_state"),
+    BT::InputPort<std::string>("goal_topic", "/behavior/nav_goal"),
     BT::InputPort<double>("feedback_timeout_sec", 10.0, "feedback timeout seconds"),
   };
 }
@@ -46,8 +47,9 @@ BT::NodeStatus NavigateToPoseAction::onStart()
   const auto goal_input = getInput<geometry_msgs::msg::PoseStamped>("goal");
   const auto action_name_input = getInput<std::string>("action_name");
   const auto state_topic_input = getInput<std::string>("state_topic");
+  const auto goal_topic_input = getInput<std::string>("goal_topic");
   const auto feedback_timeout_input = getInput<double>("feedback_timeout_sec");
-  if (!goal_input || !action_name_input || !state_topic_input) {
+  if (!goal_input || !action_name_input || !state_topic_input || !goal_topic_input) {
     return BT::NodeStatus::FAILURE;
   }
 
@@ -89,6 +91,7 @@ BT::NodeStatus NavigateToPoseAction::onStart()
 
   NavigateToPose::Goal goal;
   goal.pose = goal_input.value();
+  publishGoal(goal.pose, goal_topic_input.value());
 
   rclcpp_action::Client<NavigateToPose>::SendGoalOptions send_goal_options;
   send_goal_options.feedback_callback = [this](GoalHandle::SharedPtr goal_handle, const std::shared_ptr<const NavigateToPose::Feedback> feedback) {
@@ -227,6 +230,22 @@ void NavigateToPoseAction::resultCallback(const GoalHandle::WrappedResult & resu
   std::lock_guard<std::mutex> lock(mutex_);
   result_ready_ = true;
   result_code_ = result.code;
+}
+
+void NavigateToPoseAction::publishGoal(const geometry_msgs::msg::PoseStamped & goal, const std::string & topic)
+{
+  if (!node_) {
+    return;
+  }
+
+  if (!goal_pub_ || goal_topic_ != topic) {
+    goal_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
+      topic,
+      rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+    goal_topic_ = topic;
+  }
+
+  goal_pub_->publish(goal);
 }
 
 void NavigateToPoseAction::publishState(const std::string & state)
