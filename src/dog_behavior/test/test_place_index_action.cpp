@@ -13,7 +13,7 @@ TEST(PlaceIndexActionNodeTest, OutputsLocalIndicesPayloadAndCount)
   auto blackboard = BT::Blackboard::create();
   blackboard->set("boxes_type_list", std::vector<std::string>{
     "food", "tool", "medical", "food", "food", "instrument", "food", "medical"});
-  blackboard->set("group_indices", std::vector<int>{0, 1, 5, 6});
+  blackboard->set("group_indices", std::vector<int>{0, 1, 5, 4});
   blackboard->set("target_type", std::string("food"));
   blackboard->set("food_box_count", 1);
   blackboard->set("tool_box_count", 0);
@@ -46,7 +46,7 @@ TEST(PlaceIndexActionNodeTest, ReturnsNoTargetWhenTypeMissingInGroup)
   auto blackboard = BT::Blackboard::create();
   blackboard->set("boxes_type_list", std::vector<std::string>{
     "food", "tool", "medical", "food", "food", "instrument", "food", "medical"});
-  blackboard->set("group_indices", std::vector<int>{0, 1, 5, 6});
+  blackboard->set("group_indices", std::vector<int>{0, 1, 5, 4});
   blackboard->set("target_type", std::string("medical"));
   blackboard->set("food_box_count", 0);
   blackboard->set("tool_box_count", 0);

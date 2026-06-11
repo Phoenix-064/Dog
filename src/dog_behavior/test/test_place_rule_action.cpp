@@ -25,7 +25,7 @@ TEST(PlaceRuleActionNodeTest, ResolvesLeftMatchTypeAndGroupA)
   EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::SUCCESS);
 
   EXPECT_EQ(blackboard->get<std::string>("target_type"), "food");
-  EXPECT_EQ(blackboard->get<std::vector<int>>("group_indices"), (std::vector<int>{0, 1, 5, 6}));
+  EXPECT_EQ(blackboard->get<std::vector<int>>("group_indices"), (std::vector<int>{0, 1, 5, 4}));
 }
 
 TEST(PlaceRuleActionNodeTest, ResolvesRightMatchTypeAndGroupB)
@@ -48,7 +48,7 @@ TEST(PlaceRuleActionNodeTest, ResolvesRightMatchTypeAndGroupB)
   EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::SUCCESS);
 
   EXPECT_EQ(blackboard->get<std::string>("target_type"), "medical");
-  EXPECT_EQ(blackboard->get<std::vector<int>>("group_indices"), (std::vector<int>{2, 3, 4, 7}));
+  EXPECT_EQ(blackboard->get<std::vector<int>>("group_indices"), (std::vector<int>{2, 3, 7, 6}));
 }
 
 TEST(PlaceRuleActionNodeTest, InvalidMatchTypeReturnsFailure)

@@ -157,6 +157,27 @@ TEST(DigitRecognizerFactoryTest, KnownTypeOpencvDnnYoloCanBeCreated)
   EXPECT_TRUE(results.empty());
 }
 
+TEST(DigitRecognizerFactoryTest, KnownTypeMathOcrCanBeCreated)
+{
+  auto recognizer = dog_perception::DigitRecognizerFactory::create(
+    "math_ocr",
+    defaultParams(),
+    rclcpp::get_logger("digit_factory_test"));
+
+  ASSERT_NE(recognizer, nullptr);
+}
+
+TEST(DigitRecognizerFactoryTest, NormalizeMathExpressionHandlesCommonOcrOperators)
+{
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("3x4"), "3*4");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("3X4"), "3*4");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr(u8"8÷2"), "8/2");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("8:2"), "8/2");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("O+1"), "0+1");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("12+3= "), "12+3");
+  EXPECT_EQ(dog_perception::normalizeMathExpressionForOcr("12a3"), "");
+}
+
 TEST(DigitRecognizerFactoryTest, ToDigitTarget3DConvertsMultipleResults)
 {
   auto image = std::make_shared<sensor_msgs::msg::Image>();
@@ -188,6 +209,31 @@ TEST(DigitRecognizerFactoryTest, ToDigitTarget3DConvertsMultipleResults)
   EXPECT_FLOAT_EQ(target_array.targets[1].confidence, 0.81F);
   EXPECT_DOUBLE_EQ(target_array.targets[1].position.x, 30.0);
   EXPECT_DOUBLE_EQ(target_array.targets[1].position.y, 40.0);
+}
+
+TEST(DigitRecognizerFactoryTest, ToDigitTarget3DUsesTargetIdOverride)
+{
+  auto image = std::make_shared<sensor_msgs::msg::Image>();
+  image->header.frame_id = "camera_optical_frame";
+
+  geometry_msgs::msg::Point point;
+  point.x = 5.0;
+  point.y = 6.0;
+  point.z = 0.0;
+
+  const dog_perception::DigitRecognitionResultArrary results{
+    dog_perception::DigitRecognitionResult{
+      true,
+      -1,
+      0.95F,
+      point,
+      "ok",
+      "type=math_expr;expr=1+2*3;raw=1+2x3;reason=ok"}};
+
+  const auto target_array = dog_perception::toDigitTarget3D(image, "base_link", results);
+  ASSERT_EQ(target_array.targets.size(), 1U);
+  EXPECT_EQ(target_array.targets.front().target_id, "type=math_expr;expr=1+2*3;raw=1+2x3;reason=ok");
+  EXPECT_FLOAT_EQ(target_array.targets.front().confidence, 0.95F);
 }
 
 TEST(DigitRecognizerFactoryTest, ToDigitTarget3DReturnsNoFeatureWhenInputEmpty)

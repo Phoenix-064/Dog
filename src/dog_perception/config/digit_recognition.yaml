@@ -1,7 +1,7 @@
 dog_perception:
   ros__parameters:
     digit_result_topic: "/target/digit_result"
-    digit_recognizer_type: "heuristic"
+    digit_recognizer_type: "math_ocr"
     digit_roi_x: 0
     digit_roi_y: 0
     digit_roi_width: 64

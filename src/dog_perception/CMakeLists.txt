@@ -18,7 +18,7 @@ set(DOG_PERCEPTION_PINNED_OPENCV_VERSION "4.5.4")
 set(DOG_PERCEPTION_PINNED_OPENCV_CMAKE_DIR "/usr/lib/x86_64-linux-gnu/cmake/opencv4")
 set(OpenCV_DIR "${DOG_PERCEPTION_PINNED_OPENCV_CMAKE_DIR}" CACHE PATH "Pinned OpenCV CMake dir" FORCE)
 find_package(OpenCV ${DOG_PERCEPTION_PINNED_OPENCV_VERSION} EXACT REQUIRED
-  COMPONENTS core imgproc imgcodecs videoio dnn calib3d
+  COMPONENTS core imgproc imgcodecs videoio dnn calib3d text
   PATHS ${DOG_PERCEPTION_PINNED_OPENCV_CMAKE_DIR}
   NO_DEFAULT_PATH)
 

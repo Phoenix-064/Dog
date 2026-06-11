@@ -320,7 +320,7 @@ Topic：
 
 规则补充：
 
-1. `PlaceRuleAction` 使用 `group_a={0,1,5,6}`、`group_b={2,3,4,7}`。
+1. `PlaceRuleAction` 使用 `group_a={0,1,5,4}`、`group_b={2,3,7,6}`。
 2. `counter` 在 `[0,7]` 内按 `match_type` 映射目标箱类型；超出范围输出空目标。
 3. `ExecutePlaceBoxesAction` 在主树中采用 fail-open（由 `ForceSuccess` 包裹）。
 

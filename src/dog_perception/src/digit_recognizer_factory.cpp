@@ -36,6 +36,7 @@ void ensureBuiltinDigitRecognizers(const rclcpp::Logger & logger)
     const bool heuristic_registered = registerHeuristicDigitRecognizer();
     const bool mean_intensity_registered = registerMeanIntensityDigitRecognizer();
     const bool yolo_registered = registerOpencvDnnYoloDigitRecognizer();
+    const bool math_ocr_registered = registerMathOcrDigitRecognizer();
     if (!heuristic_registered) {
       RCLCPP_ERROR(logger, "Failed to register builtin recognizer: heuristic");
     }
@@ -44,6 +45,9 @@ void ensureBuiltinDigitRecognizers(const rclcpp::Logger & logger)
     }
     if (!yolo_registered) {
       RCLCPP_ERROR(logger, "Failed to register builtin recognizer: opencv_dnn_yolo");
+    }
+    if (!math_ocr_registered) {
+      RCLCPP_ERROR(logger, "Failed to register builtin recognizer: math_ocr");
     }
   });
 }
@@ -80,7 +84,7 @@ std::unique_ptr<IDigitRecognizer> DigitRecognizerFactory::create(
 {
   ensureBuiltinDigitRecognizers(logger);
 
-  const std::string resolved_type = recognizer_type.empty() ? "heuristic" : recognizer_type;
+  const std::string resolved_type = recognizer_type.empty() ? "math_ocr" : recognizer_type;
   DigitRecognizerCreator creator;
   bool fallback_used = false;
 
@@ -137,7 +141,7 @@ dog_interfaces::msg::Target3DArray toDigitTarget3D(
 
     dog_interfaces::msg::Target3D message;
     message.header = message_array.header;
-    message.target_id = "digit_" + std::to_string(result.label);
+    message.target_id = result.target_id.empty() ? "digit_" + std::to_string(result.label) : result.target_id;
     message.position = result.position;
     message.confidence = result.confidence;
     message_array.targets.push_back(std::move(message));

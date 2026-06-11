@@ -110,7 +110,7 @@
     - `PublishMathAnswerAction`
   - 语义对齐：
     - `counter` 前推进，`counter > 7` 进入结束语义。
-    - `group_a={0,1,5,6}`，`group_b={2,3,4,7}`。
+    - `group_a={0,1,5,4}`，`group_b={2,3,7,6}`。
     - payload 采用 `key=value`，格式示例 `place=0,3,count=3`。
     - `*_box_count` 仅在 `ExecutePlaceBoxesAction` 收到 action 成功且 accepted 时提交。
     - 放置执行采用 fail-open（XML 中 `ForceSuccess` 包裹执行节点）。

@@ -39,6 +39,7 @@ struct DigitRecognitionResult
   // Pixel-space center in the input image ROI; z is reserved as 0.0.
   geometry_msgs::msg::Point position;
   std::string reason;
+  std::string target_id;
 };
 
 using DigitRecognitionResultArrary = std::vector<DigitRecognitionResult>;
@@ -75,6 +76,14 @@ bool registerMeanIntensityDigitRecognizer();
 /// @brief 注册内置 OpenCV DNN YOLO 数字识别器实现。
 /// @return 注册成功时返回 true。
 bool registerOpencvDnnYoloDigitRecognizer();
+/// @brief 注册内置 OpenCV OCRTesseract 数学题识别器实现。
+/// @return 注册成功时返回 true。
+bool registerMathOcrDigitRecognizer();
+
+/// @brief 规范化 OCR 输出中的四则运算表达式。
+/// @param raw_text OCR 原始输出。
+/// @return 可交给行为树解析的表达式；非法时返回空字符串。
+std::string normalizeMathExpressionForOcr(const std::string & raw_text);
 
 class DigitRecognizerFactory
 {

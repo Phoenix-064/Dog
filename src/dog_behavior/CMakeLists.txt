@@ -212,6 +212,7 @@ if(BUILD_TESTING)
       rclcpp
       behaviortree_cpp_v3
       std_msgs
+      dog_interfaces
     )
   endif()
 endif()

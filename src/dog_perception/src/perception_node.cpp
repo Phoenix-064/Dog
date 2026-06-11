@@ -279,7 +279,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   idle_spinning_publish_ms_ = declare_parameter<int>("idle_spinning_publish_ms", 200);
   qos_reliability_ = declare_parameter<std::string>("qos_reliability", "best_effort");
   solver_type_ = declare_parameter<std::string>("solver_type", "minimal_pnp");
-  digit_recognizer_type_ = declare_parameter<std::string>("digit_recognizer_type", "heuristic");
+  digit_recognizer_type_ = declare_parameter<std::string>("digit_recognizer_type", "math_ocr");
   extrinsics_yaml_path_ =
     declare_parameter<std::string>("extrinsics_yaml_path", getDefaultExtrinsicsYamlPath());
   digit_roi_x_ = declare_parameter<int>("digit_roi_x", 0);
@@ -884,8 +884,12 @@ void PerceptionNode::processDigitRecognition(
     std::remove_if(
       results.begin(),
       results.end(),
-      [](const DigitRecognitionResult & item) {
-        return !item.has_feature || item.confidence < kHighConfidenceThreshold;
+      [this](const DigitRecognitionResult & item) {
+        const bool is_math_expr = item.target_id.find("type=math_expr") != std::string::npos;
+        const float confidence_threshold = is_math_expr ?
+          static_cast<float>(digit_min_confidence_) :
+          kHighConfidenceThreshold;
+        return !item.has_feature || item.confidence < confidence_threshold;
       }),
     results.end());
 
