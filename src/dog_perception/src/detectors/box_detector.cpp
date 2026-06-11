@@ -355,12 +355,10 @@ dog_interfaces::msg::Target3DArray BoxDetector::detect(
   message_array.header = image_msg->header;
   message_array.targets.reserve(detections.size());
 
-  int index = 0;
   for (const auto & detection : detections) {
     dog_interfaces::msg::Target3D message;
     message.header = image_msg->header;
-    message.target_id = class_names_[static_cast<size_t>(detection.class_id)] +
-      "#" + std::to_string(index);
+    message.target_id = class_names_[static_cast<size_t>(detection.class_id)];
     message.position.x = static_cast<double>(detection.x + detection.width / 2.0F) /
       static_cast<double>(width_f);
     message.position.y = static_cast<double>(detection.y + detection.height / 2.0F) /
@@ -369,7 +367,6 @@ dog_interfaces::msg::Target3DArray BoxDetector::detect(
       static_cast<double>(area_f);
     message.confidence = detection.confidence;
     message_array.targets.push_back(std::move(message));
-    ++index;
   }
 
   return message_array;

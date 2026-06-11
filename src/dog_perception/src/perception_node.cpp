@@ -123,6 +123,36 @@ double percentile95(const boost::circular_buffer<double> & samples)
   return sorted[std::min(index, sorted.size() - 1)];
 }
 
+void sortTargetsForBehaviorRows(dog_interfaces::msg::Target3DArray & message)
+{
+  if (message.targets.size() <= 1U) {
+    return;
+  }
+
+  std::stable_sort(
+    message.targets.begin(),
+    message.targets.end(),
+    [](const dog_interfaces::msg::Target3D & lhs, const dog_interfaces::msg::Target3D & rhs) {
+      return lhs.position.y < rhs.position.y;
+    });
+
+  const size_t first_row_count = std::min<size_t>(4U, message.targets.size());
+  auto second_row_begin = message.targets.begin() + static_cast<std::ptrdiff_t>(first_row_count);
+
+  std::stable_sort(
+    message.targets.begin(),
+    second_row_begin,
+    [](const dog_interfaces::msg::Target3D & lhs, const dog_interfaces::msg::Target3D & rhs) {
+      return lhs.position.x < rhs.position.x;
+    });
+  std::stable_sort(
+    second_row_begin,
+    message.targets.end(),
+    [](const dog_interfaces::msg::Target3D & lhs, const dog_interfaces::msg::Target3D & rhs) {
+      return lhs.position.x < rhs.position.x;
+    });
+}
+
 }  // namespace
 
 std::string PerceptionNode::getDefaultExtrinsicsYamlPath()
@@ -206,7 +236,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , box_confidence_threshold_(0.35)
 , box_nms_threshold_(0.45)
 , box_max_detections_(16)
-, box_class_names_({"type_0", "type_1", "type_2", "type_3"})
+, box_class_names_({"food", "tool", "instrument", "medical"})
 , qos_compatible_(true)
 , idle_spinning_mode_(false)
 , extrapolation_active_(false)
@@ -269,7 +299,7 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   box_max_detections_ = declare_parameter<int>("box_max_detections", 16);
   box_class_names_ = declare_parameter<std::vector<std::string>>(
     "box_class_names",
-    std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
+    std::vector<std::string>{"food", "tool", "instrument", "medical"});
 
   if (sync_queue_size_ <= 0 || sync_slop_ms_ <= 0 || stale_frame_timeout_ms_ <= 0 ||
     max_future_skew_ms_ < 0 || frame_cache_size_ <= 0 || digit_temporal_window_ <= 0 ||
@@ -578,11 +608,12 @@ void PerceptionNode::synchronizedCallback(
     return;
   }
 
+  dog_interfaces::msg::Target3DArray target3d_array_msg;
   if (box_detector_) {
-    const auto box_results = box_detector_->detect(image_msg);
-    if (!box_results.targets.empty()) {
-      target3d_msg->target_id += "|box:" + box_results.targets.front().target_id;
-    }
+    target3d_array_msg = box_detector_->detect(image_msg);
+    sortTargetsForBehaviorRows(target3d_array_msg);
+  } else {
+    target3d_array_msg.header = target3d_msg->header;
   }
 
   const auto end = now();
@@ -608,9 +639,10 @@ void PerceptionNode::synchronizedCallback(
 
   frame_history_.push_back(FrameState{end, elapsed_ms, true});
 
-  dog_interfaces::msg::Target3DArray target3d_array_msg;
-  target3d_array_msg.header = target3d_msg->header;
-  target3d_array_msg.targets.push_back(*target3d_msg);
+  if (target3d_array_msg.targets.empty()) {
+    target3d_array_msg.header = target3d_msg->header;
+    target3d_array_msg.targets.push_back(*target3d_msg);
+  }
   target3d_pub_->publish(std::move(target3d_array_msg));
 }
 
@@ -905,6 +937,11 @@ void PerceptionNode::processDigitRecognition(
     input_age_ms);
 
   digit_result_pub_->publish(std::move(message_array));
+}
+
+void PerceptionNode::SetBoxDetectorForTest(std::unique_ptr<IBoxDetector> detector)
+{
+  box_detector_ = std::move(detector);
 }
 
 size_t PerceptionNode::getFrameCacheSize() const

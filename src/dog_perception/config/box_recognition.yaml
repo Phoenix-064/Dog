@@ -1,9 +1,8 @@
-dog_box_detector:
+dog_perception:
   ros__parameters:
-    image_topic: "/camera/image_raw"1
-    box_result_topic: "/target/box_result"
+    image_topic: "/camera/image_raw"
     box_yolo_model_path: "boxes_detector.pt"
     box_confidence_threshold: 0.35
     box_nms_threshold: 0.45
     box_max_detections: 16
-    box_class_names: ["type_0", "type_1", "type_2", "type_3"]
+    box_class_names: ["food", "tool", "instrument", "medical"]

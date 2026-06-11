@@ -74,6 +74,9 @@ public:
   /// @brief 计算数字识别时延的 p95（毫秒）。
   /// @return 数字识别 P95 时延。
   double getDigitLatencyP95Ms() const;
+  /// @brief 替换箱体检测器，供单元测试注入确定性结果。
+  /// @param detector 测试用箱体检测器。
+  void SetBoxDetectorForTest(std::unique_ptr<IBoxDetector> detector);
 
 private:
   using SyncPolicy = message_filters::sync_policies::ApproximateTime<
@@ -229,7 +232,7 @@ private:
   std::unique_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
   std::unique_ptr<ITarget3DSolver> solver_;
   std::unique_ptr<IDigitRecognizer> digit_recognizer_;
-  std::unique_ptr<BoxDetector> box_detector_;
+  std::unique_ptr<IBoxDetector> box_detector_;
 
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> image_subscriber_;
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> pointcloud_subscriber_;

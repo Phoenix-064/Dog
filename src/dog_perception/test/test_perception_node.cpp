@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -181,7 +182,7 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("box_yolo_model_path", "/tmp/not_found_boxes_model.pt");
   options.append_parameter_override(
     "box_class_names",
-    std::vector<std::string>{"type_0", "type_1", "type_2", "type_3"});
+    std::vector<std::string>{"food", "tool", "instrument", "medical"});
   return std::make_shared<dog_perception::PerceptionNode>(options);
 }
 
@@ -246,6 +247,48 @@ bool ensureMultiResultRecognizerRegistered()
     });
   return registered;
 }
+
+dog_interfaces::msg::Target3D makeBoxTarget(
+  const std::string & target_id,
+  const double x,
+  const double y,
+  const double area = 0.05)
+{
+  dog_interfaces::msg::Target3D target;
+  target.header.frame_id = "camera_optical_frame";
+  target.target_id = target_id;
+  target.position.x = x;
+  target.position.y = y;
+  target.position.z = area;
+  target.confidence = 0.9F;
+  return target;
+}
+
+class FixedBoxDetector final : public dog_perception::IBoxDetector
+{
+public:
+  explicit FixedBoxDetector(std::vector<dog_interfaces::msg::Target3D> targets)
+  : targets_(std::move(targets))
+  {
+  }
+
+  dog_interfaces::msg::Target3DArray detect(
+    const sensor_msgs::msg::Image::ConstSharedPtr & image_msg) override
+  {
+    dog_interfaces::msg::Target3DArray message;
+    if (image_msg) {
+      message.header = image_msg->header;
+    }
+    message.targets = targets_;
+    for (auto & target : message.targets) {
+      target.header = message.header;
+    }
+    return message;
+  }
+
+private:
+  std::vector<dog_interfaces::msg::Target3D> targets_;
+};
 
 }  // namespace
 
@@ -362,10 +405,7 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
     target_topic,
     rclcpp::SensorDataQoS(),
     [&target_received](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
-      if (
-        !message->targets.empty() &&
-        message->targets.front().target_id.find("synced_target|box:") == 0U)
-      {
+      if (!message->targets.empty() && message->targets.front().target_id == "no_box") {
         target_received = true;
       }
     });
@@ -393,7 +433,70 @@ TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesTarget3D)
   std::filesystem::remove(yaml_path);
 }
 
-TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesFiniteTarget3D)
+TEST_F(PerceptionNodeTest, SynchronizedPipelinePublishesEightSortedBoxes)
+{
+  const auto yaml_path = createTempExtrinsicsYaml();
+
+  const std::string image_topic = "/test/image/eight_boxes";
+  const std::string cloud_topic = "/test/cloud/eight_boxes";
+  const std::string target_topic = "/test/target/eight_boxes";
+
+  auto perception_node = createPerceptionNode(yaml_path, image_topic, cloud_topic, target_topic);
+  perception_node->SetBoxDetectorForTest(std::make_unique<FixedBoxDetector>(
+    std::vector<dog_interfaces::msg::Target3D>{
+      makeBoxTarget("G", 0.4, 0.3),
+      makeBoxTarget("D", 0.3, 0.1),
+      makeBoxTarget("B", 0.1, 0.0),
+      makeBoxTarget("F", 0.1, 0.2),
+      makeBoxTarget("A", 0.2, 0.0),
+      makeBoxTarget("H", 0.3, 0.3),
+      makeBoxTarget("E", 0.2, 0.2),
+      makeBoxTarget("C", 0.4, 0.1)}));
+  auto io_node = std::make_shared<rclcpp::Node>("io_eight_boxes");
+
+  auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
+  auto cloud_pub =
+    io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
+
+  std::vector<dog_interfaces::msg::Target3D> received_targets;
+  auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
+    target_topic,
+    rclcpp::SensorDataQoS(),
+    [&received_targets](const dog_interfaces::msg::Target3DArray::ConstSharedPtr message) {
+      received_targets = message->targets;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(perception_node);
+  executor.add_node(io_node);
+  spinFor(executor, std::chrono::milliseconds(80));
+
+  const auto stamp = io_node->now();
+  image_pub->publish(makeImage(stamp));
+  cloud_pub->publish(makePointCloud(stamp));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(400), [&]() {
+    return received_targets.size() == 8U;
+  }));
+
+  std::vector<std::string> target_ids;
+  target_ids.reserve(received_targets.size());
+  for (const auto & target : received_targets) {
+    target_ids.push_back(target.target_id);
+    EXPECT_GE(target.position.x, 0.0);
+    EXPECT_LE(target.position.x, 1.0);
+    EXPECT_GE(target.position.y, 0.0);
+    EXPECT_LE(target.position.y, 1.0);
+  }
+  EXPECT_EQ(target_ids, (std::vector<std::string>{"B", "A", "D", "C", "F", "E", "H", "G"}));
+
+  executor.remove_node(io_node);
+  executor.remove_node(perception_node);
+  (void)target_sub;
+  std::filesystem::remove(yaml_path);
+}
+
+TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesBoxFallbackWhenModelUnavailable)
 {
   const auto yaml_path = createTempExtrinsicsYaml();
 
@@ -450,14 +553,14 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesFiniteTarget3D)
   spinFor(executor, std::chrono::milliseconds(250));
 
   ASSERT_TRUE(target_received);
-  EXPECT_EQ(received_msg.target_id, "synced_target|box:no_box");
-  EXPECT_EQ(received_msg.header.frame_id, "base_link");
+  EXPECT_EQ(received_msg.target_id, "no_box");
+  EXPECT_EQ(received_msg.header.frame_id, "camera_optical_frame");
   EXPECT_TRUE(std::isfinite(received_msg.position.x));
   EXPECT_TRUE(std::isfinite(received_msg.position.y));
   EXPECT_TRUE(std::isfinite(received_msg.position.z));
-  EXPECT_NEAR(received_msg.position.x, 1.5, 1e-3);
-  EXPECT_NEAR(received_msg.position.y, 1.5, 1e-3);
-  EXPECT_NEAR(received_msg.position.z, 4.5, 1e-3);
+  EXPECT_DOUBLE_EQ(received_msg.position.x, 0.0);
+  EXPECT_DOUBLE_EQ(received_msg.position.y, 0.0);
+  EXPECT_DOUBLE_EQ(received_msg.position.z, 0.0);
   EXPECT_GE(perception_node->getSolvedFrameCount(), 1U);
   EXPECT_LT(perception_node->getEndToEndLatencyP95Ms(), 50.0);
 

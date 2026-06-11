@@ -13,7 +13,19 @@
 namespace dog_perception
 {
 
-class BoxDetector
+class IBoxDetector
+{
+public:
+  virtual ~IBoxDetector() = default;
+
+  /// @brief 对输入图像执行箱体检测并返回识别结果。
+  /// @param image_msg 图像消息。
+  /// @return 识别结果数组（无检测时返回 no_box）。
+  virtual dog_interfaces::msg::Target3DArray detect(
+    const sensor_msgs::msg::Image::ConstSharedPtr & image_msg) = 0;
+};
+
+class BoxDetector : public IBoxDetector
 {
 public:
   struct Params
@@ -34,7 +46,7 @@ public:
   /// @param image_msg 图像消息。
   /// @return 识别结果数组（无检测时返回 no_box）。
   dog_interfaces::msg::Target3DArray detect(
-    const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
+    const sensor_msgs::msg::Image::ConstSharedPtr & image_msg) override;
 
 private:
   struct Detection

@@ -43,7 +43,7 @@ dog_perception::BoxDetector::Params makeParams(const std::string & model_path)
     0.35,
     0.45,
     8,
-    {"blue", "red", "green", "yellow"}};
+    {"food", "tool", "instrument", "medical"}};
 }
 
 }  // namespace

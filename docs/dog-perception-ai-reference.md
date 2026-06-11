@@ -101,8 +101,8 @@ flowchart TD
 4. 检查 stale/future skew，不通过则丢帧。
 5. 执行数字识别并发布 digit_result。
 6. 调用 solver 求解 Target3D。
-7. 调用 box_detector 并将最高置信箱体类型拼接进 target_id。
-8. 统计时延样本，写入 pose/history，发布 target3d。
+7. 调用 box_detector 生成箱体 Target3DArray，并按两排空间顺序整理。
+8. 统计时延样本，写入 pose/history，发布箱体 target3d 数组。
 
 ```mermaid
 flowchart TD
@@ -184,7 +184,7 @@ MinimalPnpSolver 关键处理：
 输出约定：
 
 1. 无检测或模型不可用时，返回单元素 target_id=no_box。
-2. 有检测时，target_id 形如 class_name#index。
+2. 有检测时，target_id 为行为层可识别箱体类型（food/tool/instrument/medical）。
 3. position 语义：x/y 为归一化中心点，z 为归一化面积。
 
 ### 3.7 相机发布链
@@ -290,7 +290,7 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 2. box_confidence_threshold=0.35
 3. box_nms_threshold=0.45
 4. box_max_detections=16
-5. box_class_names=[type_0,type_1,type_2,type_3]
+5. box_class_names=[food,tool,instrument,medical]
 
 重要约束：
 
@@ -410,4 +410,4 @@ P95 相关实现位置：
 1. 修改 lifecycle_mode 字符串协议时，同步更新 mode 解析与回调测试。
 2. 修改同步/掉帧阈值时，优先回归 stale、dropout extrapolation、QoS 兼容场景。
 3. 修改识别器工厂注册机制时，回归 duplicate registration、fallback、null creator 场景。
-4. 修改 Target3D target_id 拼接逻辑时，回归包含 box:no_box 的契约测试。
+4. 修改箱体 Target3DArray 发布契约时，回归 no_box fallback 与 8 箱排序测试。
