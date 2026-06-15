@@ -1,6 +1,6 @@
 # dog_behavior AI 开发参考（当前代码基线）
 
-本文档描述的是当前代码基线（截至 2026-04-25），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
+本文档描述的是当前代码基线（截至 2026-06-14），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
 
 适用范围：`src/dog_behavior` 包。
 
@@ -11,7 +11,7 @@
 当前已完成从旧双节点架构到单节点行为树架构的切换：
 
 1. 运行入口为 `BehaviorTreeNode`（可执行：`dog_behavior_bt_node`）。
-2. BT 叶子节点直接对接 `ExecuteBehavior`、Nav2 `NavigateToPose`、`PlaceBoxes`，不再使用独立导航代理节点。
+2. BT 叶子节点直接对接 `ExecuteBehavior`、串口目标点导航 `NavigateWaypoint`、`PlaceBoxes`，不再使用 Nav2。
 3. `dog_behavior::utils` 提供字符串协议解析与 pose 校验公共工具。
 
 数据主链路：
@@ -32,8 +32,9 @@ flowchart TD
   L --> N[Blackboard.recovery_context]
 
   O[ExecuteBehaviorAction] --> P[/behavior/execute Action Client]
-  Q[NavigateToPoseAction] --> R[/navigate_to_pose Action Client]
+  Q[NavigateWaypointAction] --> R[/behavior/nav_execute Action Client]
   Q --> S[/behavior/nav_exec_state Topic]
+  Q --> Z[/behavior/nav_goal Topic]
   T[SetBoxesTypeAction] --> U[/target/target_3d Topic]
   V[ExecutePlaceBoxesAction] --> W[/behavior/place_boxes Action Client]
   X[PublishMathAnswerAction] --> Y[/math_answer Topic]
@@ -95,7 +96,8 @@ flowchart TD
 1. [src/dog_behavior/CMakeLists.txt](../src/dog_behavior/CMakeLists.txt)
 2. [src/dog_behavior/package.xml](../src/dog_behavior/package.xml)
 3. [src/dog_interfaces/action/ExecuteBehavior.action](../src/dog_interfaces/action/ExecuteBehavior.action)
-4. [src/dog_interfaces/action/PlaceBoxes.action](../src/dog_interfaces/action/PlaceBoxes.action)
+4. [src/dog_interfaces/action/NavigateWaypoint.action](../src/dog_interfaces/action/NavigateWaypoint.action)
+5. [src/dog_interfaces/action/PlaceBoxes.action](../src/dog_interfaces/action/PlaceBoxes.action)
 
 测试：
 
@@ -146,7 +148,7 @@ flowchart TD
 执行节点：
 
 1. `ExecuteBehaviorAction`：调用 `/behavior/execute`（`dog_interfaces/action/ExecuteBehavior`）。
-2. `NavigateToPoseAction`：调用 `/navigate_to_pose`（`nav2_msgs/action/NavigateToPose`）并发布 `/behavior/nav_exec_state`。
+2. `NavigateWaypointAction`：调用 `/behavior/nav_execute`（`dog_interfaces/action/NavigateWaypoint`），并发布 `/behavior/nav_exec_state` 与 `/behavior/nav_goal`。
 3. `SetBoxesTypeAction`：订阅 `/target/target_3d`，按“两排排序”生成 `boxes_type_list`。
 4. `AdvancePlaceCounterAction`：推进 `counter`，`counter > 7` 输出 `done=true`。
 5. `PlaceRuleAction`：根据 `match_type + counter` 生成 `target_type` 与 `group_indices`。
@@ -198,18 +200,19 @@ flowchart TD
 Action Client：
 
 1. `ExecuteBehaviorAction`：`/behavior/execute`，类型 `dog_interfaces/action/ExecuteBehavior`
-2. `NavigateToPoseAction`：`/navigate_to_pose`，类型 `nav2_msgs/action/NavigateToPose`
+2. `NavigateWaypointAction`：`/behavior/nav_execute`，类型 `dog_interfaces/action/NavigateWaypoint`
 3. `ExecutePlaceBoxesAction`：`/behavior/place_boxes`，类型 `dog_interfaces/action/PlaceBoxes`
 
 Topic：
 
-1. `NavigateToPoseAction` 发布 `/behavior/nav_exec_state`（`std_msgs/msg/String`）
-2. `SetBoxesTypeAction` 订阅 `/target/target_3d`（`dog_interfaces/msg/Target3DArray`）
-3. `PublishMathAnswerAction` 发布 `/math_answer`（`std_msgs/msg/String`）
+1. `NavigateWaypointAction` 发布 `/behavior/nav_exec_state`（`std_msgs/msg/String`）
+2. `NavigateWaypointAction` 发布 `/behavior/nav_goal`（`geometry_msgs/msg/PoseStamped`），供观测与串口导航节点兼容链路使用。
+3. `SetBoxesTypeAction` 订阅 `/target/target_3d`（`dog_interfaces/msg/Target3DArray`）
+4. `PublishMathAnswerAction` 发布 `/math_answer`（`std_msgs/msg/String`）
 
 说明：
 
-1. 当前运行架构中已无 `/behavior/navigate_execute` 内部 action server 路径。
+1. 当前运行架构中已无 Nav2 `/navigate_to_pose` 路径；目标点导航完成由 `dog_serial_bridge_nav_telemetry_node` 等待 MCU `RCArrivalMX` 回包判定。
 
 ---
 
@@ -256,17 +259,18 @@ Topic：
 
 ### 6.2 关键 BT 端口默认值
 
-1. `NavigateToPoseAction.action_name` = `/navigate_to_pose`
-2. `NavigateToPoseAction.state_topic` = `/behavior/nav_exec_state`
-3. `NavigateToPoseAction.feedback_timeout_sec` = `10.0`
-4. `ExecuteBehaviorAction.action_name` = `/behavior/execute`
-5. `ExecuteBehaviorAction.feedback_timeout_sec` = `2.0`
-6. `ExecutePlaceBoxesAction.action_name` = `/behavior/place_boxes`
-7. `ExecutePlaceBoxesAction.feedback_timeout_sec` = `2.0`
-8. `ExecutePlaceBoxesAction.has_target` = `true`
-9. `WaitForPose.timeout_ms` = `5000`
-10. `PublishMathAnswerAction.answer` = `42`
-11. `PublishMathAnswerAction.topic_name` = `/math_answer`
+1. `NavigateWaypointAction.action_name` = `/behavior/nav_execute`
+2. `NavigateWaypointAction.state_topic` = `/behavior/nav_exec_state`
+3. `NavigateWaypointAction.goal_topic` = `/behavior/nav_goal`
+4. `NavigateWaypointAction.feedback_timeout_sec` = `10.0`
+5. `ExecuteBehaviorAction.action_name` = `/behavior/execute`
+6. `ExecuteBehaviorAction.feedback_timeout_sec` = `2.0`
+7. `ExecutePlaceBoxesAction.action_name` = `/behavior/place_boxes`
+8. `ExecutePlaceBoxesAction.feedback_timeout_sec` = `2.0`
+9. `ExecutePlaceBoxesAction.has_target` = `true`
+10. `WaitForPose.timeout_ms` = `5000`
+11. `PublishMathAnswerAction.answer` = `42`
+12. `PublishMathAnswerAction.topic_name` = `/math_answer`
 
 ---
 
@@ -312,7 +316,7 @@ Topic：
 
 子树 `PlaceAtGoal`：
 
-1. `NavigateToPoseAction(place_goal)`
+1. `NavigateWaypointAction(place_goal)`
 2. `AdvancePlaceCounterAction`
 3. `PlaceRuleAction`
 4. `PlaceIndexAction`
@@ -336,7 +340,7 @@ Topic：
 4. `test_wait_for_pose_condition`：有/无 pose 条件语义。
 5. `test_select_waypoint_action`：航点输出与索引轮转。
 6. `test_execute_behavior_action`：`ExecuteBehavior` 异步动作成功路径。
-7. `test_navigate_to_pose_action`：Nav2 导航叶子成功路径。
+7. `test_navigate_waypoint_action`：串口目标点导航叶子成功路径（测试源文件仍为 `test_navigate_to_pose_action.cpp`）。
 8. `test_set_boxes_type_action`：箱体排序与一次缓存语义。
 9. `test_advance_place_counter_action`：计数推进与 done 边界。
 10. `test_place_rule_action`：left/right 规则与非法 match_type。
@@ -359,9 +363,9 @@ Topic：
 推荐命令：
 
 1. `source /opt/ros/humble/setup.bash`
-2. `colcon build --packages-select dog_interfaces dog_behavior`
-3. `colcon test --packages-select dog_behavior`
-4. `colcon test-result --test-result-base build/dog_behavior/test_results --verbose`
+2. `colcon build --packages-select dog_interfaces dog_serial_bridge dog_behavior`
+3. `colcon test --packages-select dog_serial_bridge dog_behavior`
+4. `colcon test-result --all --verbose`
 5. `source install/setup.bash`
 6. `ros2 launch dog_behavior launch.py`
 

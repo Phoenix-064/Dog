@@ -18,8 +18,6 @@ def _create_optional_third_party_actions(context, *args, **kwargs):
     livox_model = LaunchConfiguration("livox_model").perform(context)
     use_point_lio = LaunchConfiguration("use_point_lio").perform(context).lower() == "true"
     use_point_lio_rviz = LaunchConfiguration("use_point_lio_rviz").perform(context)
-    use_nav2 = LaunchConfiguration("use_nav2").perform(context).lower() == "true"
-    nav2_params_file = LaunchConfiguration("nav2_params_file").perform(context)
 
     if use_livox:
         try:
@@ -45,22 +43,6 @@ def _create_optional_third_party_actions(context, *args, **kwargs):
             )
         except Exception:
             actions.append(LogInfo(msg="[dog_behavior.launch] point_lio not found, skip point_lio launch."))
-
-    if use_nav2:
-        try:
-            nav2_share = get_package_share_directory("nav2_bringup")
-            actions.append(
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource([nav2_share, "/launch/navigation_launch.py"]),
-                    launch_arguments={
-                        "use_sim_time": "false",
-                        "autostart": "true",
-                        "params_file": nav2_params_file,
-                    }.items(),
-                )
-            )
-        except Exception:
-            actions.append(LogInfo(msg="[dog_behavior.launch] nav2_bringup not found, skip Nav2 launch."))
 
     return actions
 
@@ -97,7 +79,7 @@ def generate_launch_description() -> LaunchDescription:
     use_nav_telemetry_serial = LaunchConfiguration("use_nav_telemetry_serial")
     nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
     nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
-    nav_telemetry_period_ms = LaunchConfiguration("nav_telemetry_period_ms")
+    nav_telemetry_ack_timeout_ms = LaunchConfiguration("nav_telemetry_ack_timeout_ms")
     map_to_camera_x = LaunchConfiguration("map_to_camera_x")
     map_to_camera_y = LaunchConfiguration("map_to_camera_y")
     map_to_camera_z = LaunchConfiguration("map_to_camera_z")
@@ -136,22 +118,10 @@ def generate_launch_description() -> LaunchDescription:
         description="Whether to start dog_perception_camera_node.",
     )
 
-    declare_use_nav2 = DeclareLaunchArgument(
-        "use_nav2",
-        default_value="true",
-        description="Whether to start Nav2 navigation stack.",
-    )
-
-    declare_nav2_params_file = DeclareLaunchArgument(
-        "nav2_params_file",
-        default_value=os.path.join(get_package_share_directory("dog_behavior"), "config", "nav2_params.yaml"),
-        description="Full path of Nav2 params YAML.",
-    )
-
     declare_goal_frame_id = DeclareLaunchArgument(
         "goal_frame_id",
         default_value="map",
-        description="Frame id for behavior tree navigation goals.",
+        description="Frame id for behavior tree waypoint goals.",
     )
 
     declare_use_serial_bridge = DeclareLaunchArgument(
@@ -181,7 +151,7 @@ def generate_launch_description() -> LaunchDescription:
     declare_use_nav_telemetry_serial = DeclareLaunchArgument(
         "use_nav_telemetry_serial",
         default_value="false",
-        description="Whether to start the independent navigation telemetry serial node.",
+        description="Whether to start the serial waypoint navigation action node.",
     )
 
     declare_nav_telemetry_serial_port = DeclareLaunchArgument(
@@ -196,10 +166,10 @@ def generate_launch_description() -> LaunchDescription:
         description="Baud rate for navigation pose telemetry serial port.",
     )
 
-    declare_nav_telemetry_period_ms = DeclareLaunchArgument(
-        "nav_telemetry_period_ms",
-        default_value="100",
-        description="Navigation pose telemetry publish period in milliseconds.",
+    declare_nav_telemetry_ack_timeout_ms = DeclareLaunchArgument(
+        "nav_telemetry_ack_timeout_ms",
+        default_value="10000",
+        description="Navigation arrival acknowledgement timeout in milliseconds.",
     )
 
     declare_map_to_camera_x = DeclareLaunchArgument(
@@ -294,7 +264,7 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[{
             "serial_port": nav_telemetry_serial_port,
             "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
-            "publish_period_ms": ParameterValue(nav_telemetry_period_ms, value_type=int),
+            "ack_timeout_ms": ParameterValue(nav_telemetry_ack_timeout_ms, value_type=int),
         }],
     )
 
@@ -323,8 +293,6 @@ def generate_launch_description() -> LaunchDescription:
         declare_use_point_lio,
         declare_use_point_lio_rviz,
         declare_use_perception_camera,
-        declare_use_nav2,
-        declare_nav2_params_file,
         declare_goal_frame_id,
         declare_use_serial_bridge,
         declare_serial_port,
@@ -333,7 +301,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_use_nav_telemetry_serial,
         declare_nav_telemetry_serial_port,
         declare_nav_telemetry_baud_rate,
-        declare_nav_telemetry_period_ms,
+        declare_nav_telemetry_ack_timeout_ms,
         declare_map_to_camera_x,
         declare_map_to_camera_y,
         declare_map_to_camera_z,

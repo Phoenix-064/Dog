@@ -264,4 +264,15 @@ TEST(BehaviorTreeXmlPlanCoverageTest, MathNodePlacedAfterWaypoint3BeforeFirstPic
   EXPECT_LT(math_node, first_pickup);
 }
 
+TEST(BehaviorTreeXmlPlanCoverageTest, UsesSerialWaypointNavigationInsteadOfNav2)
+{
+  const std::string xml = readTextFile(DOG_BEHAVIOR_PHASE3_BT_XML_PATH);
+  ASSERT_FALSE(xml.empty());
+
+  EXPECT_EQ(xml.find("NavigateToPoseAction"), std::string::npos);
+  EXPECT_EQ(xml.find("/navigate_to_pose"), std::string::npos);
+  EXPECT_NE(xml.find("NavigateWaypointAction"), std::string::npos);
+  EXPECT_NE(xml.find("/behavior/nav_execute"), std::string::npos);
+}
+
 }  // namespace

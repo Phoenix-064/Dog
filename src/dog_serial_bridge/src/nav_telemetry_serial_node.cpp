@@ -8,6 +8,7 @@
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 namespace dog_serial_bridge
@@ -15,6 +16,17 @@ namespace dog_serial_bridge
 
 namespace
 {
+
+constexpr double kMetersToCentimeters = 100.0;
+constexpr char kArrivalReply[] = "RCArrivalMX";
+
+std::string trimLine(std::string line)
+{
+  while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+    line.pop_back();
+  }
+  return line;
+}
 
 bool isFinitePose(const geometry_msgs::msg::Pose & pose)
 {
@@ -84,9 +96,9 @@ void appendPoseFields(
     return;
   }
 
-  stream << ';' << prefix << "_x=" << cache.pose.pose.position.x
-         << ';' << prefix << "_y=" << cache.pose.pose.position.y
-         << ';' << prefix << "_z=" << cache.pose.pose.position.z
+  stream << ';' << prefix << "_x=" << cache.pose.pose.position.x * kMetersToCentimeters
+         << ';' << prefix << "_y=" << cache.pose.pose.position.y * kMetersToCentimeters
+         << ';' << prefix << "_z=" << cache.pose.pose.position.z * kMetersToCentimeters
          << ';' << prefix << "_yaw=" << yawFromPose(cache.pose.pose);
 }
 
@@ -99,15 +111,17 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 , serial_connection_(serial_connection ? std::move(serial_connection) : std::make_shared<SystemSerialConnection>())
 , serial_ready_(false)
 , write_newline_(true)
-, publish_period_ms_(100)
+, ack_timeout_ms_(10000)
 , reconnect_period_ms_(1000)
 , sequence_(0U)
+, goal_reserved_(false)
 {
   declareParameters();
   loadParameters();
 
   const auto current_pose_topic = declare_parameter<std::string>("current_pose_topic", "/dog/global_pose");
   const auto goal_pose_topic = declare_parameter<std::string>("goal_pose_topic", "/behavior/nav_goal");
+  const auto action_name = declare_parameter<std::string>("action_name", "/behavior/nav_execute");
 
   auto pose_qos = rclcpp::QoS(rclcpp::KeepLast(20));
   pose_qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
@@ -116,25 +130,27 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
     current_pose_topic,
     pose_qos,
     std::bind(&NavTelemetrySerialNode::currentPoseCallback, this, std::placeholders::_1));
-  goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-    goal_pose_topic,
-    pose_qos,
-    std::bind(&NavTelemetrySerialNode::goalPoseCallback, this, std::placeholders::_1));
+  goal_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(goal_pose_topic, pose_qos);
 
   initializeSerial();
 
-  publish_timer_ = create_wall_timer(
-    std::chrono::milliseconds(publish_period_ms_),
-    std::bind(&NavTelemetrySerialNode::publishTimerCallback, this));
+  using namespace std::placeholders;
+  action_server_ = rclcpp_action::create_server<NavigateWaypoint>(
+    this,
+    action_name,
+    std::bind(&NavTelemetrySerialNode::handleGoal, this, _1, _2),
+    std::bind(&NavTelemetrySerialNode::handleCancel, this, _1),
+    std::bind(&NavTelemetrySerialNode::handleAccepted, this, _1));
 
   RCLCPP_INFO(
     get_logger(),
-    "NavTelemetrySerialNode initialized, current_pose_topic=%s, goal_pose_topic=%s, serial_port=%s, baud=%d, period_ms=%d",
+    "NavTelemetrySerialNode initialized, action_name=%s, current_pose_topic=%s, goal_pose_topic=%s, serial_port=%s, baud=%d, ack_timeout_ms=%d",
+    action_name.c_str(),
     current_pose_topic.c_str(),
     goal_pose_topic.c_str(),
     serial_config_.port.c_str(),
     serial_config_.baud_rate,
-    publish_period_ms_);
+    ack_timeout_ms_);
 }
 
 NavTelemetrySerialNode::~NavTelemetrySerialNode()
@@ -146,7 +162,7 @@ void NavTelemetrySerialNode::declareParameters()
 {
   declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
   declare_parameter<int>("baud_rate", 115200);
-  declare_parameter<int>("publish_period_ms", 100);
+  declare_parameter<int>("ack_timeout_ms", 10000);
   declare_parameter<int>("reconnect_period_ms", 1000);
   declare_parameter<bool>("write_newline", true);
   declare_parameter<std::string>("read_line_delimiter", "\\n");
@@ -156,14 +172,14 @@ void NavTelemetrySerialNode::loadParameters()
 {
   serial_config_.port = get_parameter("serial_port").as_string();
   serial_config_.baud_rate = get_parameter("baud_rate").as_int();
-  publish_period_ms_ = get_parameter("publish_period_ms").as_int();
+  ack_timeout_ms_ = get_parameter("ack_timeout_ms").as_int();
   reconnect_period_ms_ = get_parameter("reconnect_period_ms").as_int();
   write_newline_ = get_parameter("write_newline").as_bool();
   serial_config_.line_delimiter = decodeDelimiter(get_parameter("read_line_delimiter").as_string());
 
-  if (publish_period_ms_ <= 0) {
-    RCLCPP_WARN(get_logger(), "Invalid publish_period_ms=%d, fallback to 100", publish_period_ms_);
-    publish_period_ms_ = 100;
+  if (ack_timeout_ms_ <= 0) {
+    RCLCPP_WARN(get_logger(), "Invalid ack_timeout_ms=%d, fallback to 10000", ack_timeout_ms_);
+    ack_timeout_ms_ = 10000;
   }
   if (reconnect_period_ms_ <= 0) {
     RCLCPP_WARN(get_logger(), "Invalid reconnect_period_ms=%d, fallback to 1000", reconnect_period_ms_);
@@ -257,34 +273,76 @@ void NavTelemetrySerialNode::currentPoseCallback(const geometry_msgs::msg::PoseS
   current_pose_.pose = *msg;
 }
 
-void NavTelemetrySerialNode::goalPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg)
+bool NavTelemetrySerialNode::isValidGoal(const geometry_msgs::msg::PoseStamped & goal) const
 {
-  if (!msg || !isFinitePose(msg->pose) || !hasValidQuaternionNorm(msg->pose)) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      2000,
-      "Drop invalid goal pose for nav telemetry");
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(pose_mutex_);
-  goal_pose_.valid = true;
-  goal_pose_.pose = *msg;
+  return isFinitePose(goal.pose) && hasValidQuaternionNorm(goal.pose);
 }
 
-void NavTelemetrySerialNode::publishTimerCallback()
+void NavTelemetrySerialNode::publishGoal(const geometry_msgs::msg::PoseStamped & goal)
 {
-  if (!isSerialReady() && !maybeReconnect()) {
+  if (goal_pose_pub_) {
+    goal_pose_pub_->publish(goal);
+  }
+}
+
+rclcpp_action::GoalResponse NavTelemetrySerialNode::handleGoal(
+  const rclcpp_action::GoalUUID & uuid,
+  std::shared_ptr<const NavigateWaypoint::Goal> goal)
+{
+  (void)uuid;
+  if (!goal || !isValidGoal(goal->target_pose)) {
+    RCLCPP_WARN(get_logger(), "nav_goal_rejected invalid_target_pose");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  if (!reserveGoalSlot()) {
+    RCLCPP_WARN(get_logger(), "nav_goal_rejected_busy");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse NavTelemetrySerialNode::handleCancel(const std::shared_ptr<GoalHandle>)
+{
+  return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void NavTelemetrySerialNode::handleAccepted(const std::shared_ptr<GoalHandle> goal_handle)
+{
+  auto self = std::static_pointer_cast<NavTelemetrySerialNode>(shared_from_this());
+  std::thread([self, goal_handle]() { self->executeGoal(goal_handle); }).detach();
+}
+
+void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_handle)
+{
+  if (!goal_handle) {
+    releaseGoalSlot();
     return;
   }
+
+  auto feedback = std::make_shared<NavigateWaypoint::Feedback>();
+  feedback->progress = 0.1F;
+  feedback->state = "sending_goal";
+  goal_handle->publish_feedback(feedback);
+
+  const auto goal_pose = goal_handle->get_goal()->target_pose;
+  publishGoal(goal_pose);
 
   PoseCache current;
   PoseCache goal;
+  goal.valid = true;
+  goal.pose = goal_pose;
   {
     std::lock_guard<std::mutex> lock(pose_mutex_);
     current = current_pose_;
-    goal = goal_pose_;
+  }
+
+  if (!isSerialReady() && !maybeReconnect()) {
+    releaseGoalSlot();
+    auto result = std::make_shared<NavigateWaypoint::Result>();
+    result->accepted = false;
+    result->detail = "serial_not_ready";
+    goal_handle->abort(result);
+    return;
   }
 
   const auto frame = appendConfiguredNewline(buildFrame(now(), current, goal));
@@ -292,6 +350,11 @@ void NavTelemetrySerialNode::publishTimerCallback()
   {
     std::lock_guard<std::mutex> lock(serial_mutex_);
     if (!serial_ready_ || !serial_connection_) {
+      releaseGoalSlot();
+      auto result = std::make_shared<NavigateWaypoint::Result>();
+      result->accepted = false;
+      result->detail = "serial_not_ready";
+      goal_handle->abort(result);
       return;
     }
     serial_connection = serial_connection_;
@@ -299,9 +362,41 @@ void NavTelemetrySerialNode::publishTimerCallback()
 
   std::string error;
   if (!serial_connection->write(frame, error)) {
-    const auto detail = error.empty() ? "nav_telemetry_write_failed" : error;
-    RCLCPP_ERROR(get_logger(), "nav_telemetry_write_failed detail=%s", detail.c_str());
+    const auto detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
+    RCLCPP_ERROR(get_logger(), "nav_goal_write_failed detail=%s", detail.c_str());
     markSerialNotReady(detail);
+    releaseGoalSlot();
+    auto result = std::make_shared<NavigateWaypoint::Result>();
+    result->accepted = false;
+    result->detail = detail;
+    goal_handle->abort(result);
+    return;
+  }
+
+  feedback->progress = 0.5F;
+  feedback->state = "waiting_arrival";
+  goal_handle->publish_feedback(feedback);
+
+  std::string detail;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ack_timeout_ms_);
+  const bool arrived = waitForArrival(deadline, detail);
+  releaseGoalSlot();
+
+  auto result = std::make_shared<NavigateWaypoint::Result>();
+  result->accepted = arrived;
+  result->detail = arrived ? "arrival_ok" : detail;
+
+  if (goal_handle->is_canceling()) {
+    result->accepted = false;
+    result->detail = "goal_canceled";
+    goal_handle->canceled(result);
+    return;
+  }
+
+  if (arrived) {
+    goal_handle->succeed(result);
+  } else {
+    goal_handle->abort(result);
   }
 }
 
@@ -343,6 +438,63 @@ std::string NavTelemetrySerialNode::appendConfiguredNewline(const std::string & 
     return frame;
   }
   return frame + '\n';
+}
+
+bool NavTelemetrySerialNode::reserveGoalSlot()
+{
+  std::lock_guard<std::mutex> lock(goal_mutex_);
+  if (goal_reserved_) {
+    return false;
+  }
+  goal_reserved_ = true;
+  return true;
+}
+
+void NavTelemetrySerialNode::releaseGoalSlot()
+{
+  std::lock_guard<std::mutex> lock(goal_mutex_);
+  goal_reserved_ = false;
+}
+
+bool NavTelemetrySerialNode::waitForArrival(
+  const std::chrono::steady_clock::time_point & deadline,
+  std::string & detail)
+{
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::shared_ptr<SerialConnection> serial_connection;
+    {
+      std::lock_guard<std::mutex> lock(serial_mutex_);
+      if (!serial_ready_ || !serial_connection_) {
+        detail = "serial_not_ready";
+        return false;
+      }
+      serial_connection = serial_connection_;
+    }
+
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - std::chrono::steady_clock::now());
+    const auto read_timeout = std::min(std::chrono::milliseconds(100), remaining);
+    const auto read_result = serial_connection->readLine(read_timeout);
+    if (read_result.status == SerialConnection::ReadStatus::kTimeout) {
+      continue;
+    }
+    if (read_result.status == SerialConnection::ReadStatus::kLine) {
+      const auto line = trimLine(read_result.line);
+      if (line == kArrivalReply) {
+        detail = "arrival_ok";
+        return true;
+      }
+      RCLCPP_WARN(get_logger(), "nav_serial_line_unmatched line=%s", line.c_str());
+      continue;
+    }
+
+    detail = read_result.error.empty() ? "serial_read_error" : "serial_read_error:" + read_result.error;
+    markSerialNotReady(detail);
+    return false;
+  }
+
+  detail = "arrival_timeout";
+  return false;
 }
 
 }  // namespace dog_serial_bridge

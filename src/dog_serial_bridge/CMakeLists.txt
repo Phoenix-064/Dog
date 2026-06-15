@@ -83,7 +83,9 @@ if(BUILD_TESTING)
     target_link_libraries(test_nav_telemetry_serial_node ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_nav_telemetry_serial_node
       rclcpp
+      rclcpp_action
       geometry_msgs
+      dog_interfaces
     )
     set_tests_properties(test_nav_telemetry_serial_node
       PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")

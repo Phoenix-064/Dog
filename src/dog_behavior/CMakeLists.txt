@@ -18,7 +18,6 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(nav2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
@@ -49,7 +48,6 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   ament_index_cpp
   behaviortree_cpp_v3
   nav_msgs
-  nav2_msgs
   geometry_msgs
   std_msgs
   dog_interfaces
@@ -145,18 +143,18 @@ if(BUILD_TESTING)
     )
   endif()
 
-  ament_add_gtest(test_navigate_to_pose_action test/test_navigate_to_pose_action.cpp)
-  if(TARGET test_navigate_to_pose_action)
-    target_link_libraries(test_navigate_to_pose_action ${PROJECT_NAME}_lib)
-    ament_target_dependencies(test_navigate_to_pose_action
+  ament_add_gtest(test_navigate_waypoint_action test/test_navigate_to_pose_action.cpp)
+  if(TARGET test_navigate_waypoint_action)
+    target_link_libraries(test_navigate_waypoint_action ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_navigate_waypoint_action
       rclcpp
       rclcpp_action
       behaviortree_cpp_v3
-      nav2_msgs
+      dog_interfaces
       geometry_msgs
       std_msgs
     )
-    set_tests_properties(test_navigate_to_pose_action
+    set_tests_properties(test_navigate_waypoint_action
       PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 

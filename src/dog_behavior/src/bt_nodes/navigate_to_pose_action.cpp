@@ -8,28 +8,29 @@
 namespace dog_behavior::bt_nodes
 {
 
-NavigateToPoseAction::NavigateToPoseAction(const std::string & name, const BT::NodeConfiguration & config)
+NavigateWaypointAction::NavigateWaypointAction(const std::string & name, const BT::NodeConfiguration & config)
 : BT::StatefulActionNode(name, config)
 , goal_accepted_(false)
 , result_ready_(false)
 , canceled_(false)
 , result_code_(rclcpp_action::ResultCode::UNKNOWN)
+, result_accepted_(false)
 , feedback_timeout_sec_(10.0)
 {
 }
 
-BT::PortsList NavigateToPoseAction::providedPorts()
+BT::PortsList NavigateWaypointAction::providedPorts()
 {
   return {
     BT::InputPort<geometry_msgs::msg::PoseStamped>("goal"),
-    BT::InputPort<std::string>("action_name", "/navigate_to_pose"),
+    BT::InputPort<std::string>("action_name", "/behavior/nav_execute"),
     BT::InputPort<std::string>("state_topic", "/behavior/nav_exec_state"),
     BT::InputPort<std::string>("goal_topic", "/behavior/nav_goal"),
     BT::InputPort<double>("feedback_timeout_sec", 10.0, "feedback timeout seconds"),
   };
 }
 
-BT::NodeStatus NavigateToPoseAction::onStart()
+BT::NodeStatus NavigateWaypointAction::onStart()
 {
   if (!config().blackboard) {
     return BT::NodeStatus::FAILURE;
@@ -62,7 +63,7 @@ BT::NodeStatus NavigateToPoseAction::onStart()
 
   const auto & action_name = action_name_input.value();
   if (!client_ || action_name_ != action_name) {
-    client_ = rclcpp_action::create_client<NavigateToPose>(node_, action_name);
+    client_ = rclcpp_action::create_client<NavigateWaypoint>(node_, action_name);
     action_name_ = action_name;
   }
 
@@ -73,7 +74,7 @@ BT::NodeStatus NavigateToPoseAction::onStart()
   }
 
   if (!client_->wait_for_action_server(std::chrono::seconds(0))) {
-    publishState("nav2_server_unavailable");
+    publishState("failed");
     return BT::NodeStatus::FAILURE;
   }
 
@@ -83,33 +84,37 @@ BT::NodeStatus NavigateToPoseAction::onStart()
     result_ready_ = false;
     canceled_ = false;
     result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+    result_accepted_ = false;
+    result_detail_.clear();
     active_goal_handle_.reset();
-    goal_handle_future_ = std::shared_future<GoalHandle::SharedPtr>();
-    result_future_ = std::shared_future<GoalHandle::WrappedResult>();
     last_feedback_time_ = node_->now();
   }
 
-  NavigateToPose::Goal goal;
-  goal.pose = goal_input.value();
-  publishGoal(goal.pose, goal_topic_input.value());
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = goal_input.value();
+  publishGoal(goal.target_pose, goal_topic_input.value());
 
-  rclcpp_action::Client<NavigateToPose>::SendGoalOptions send_goal_options;
-  send_goal_options.feedback_callback = [this](GoalHandle::SharedPtr goal_handle, const std::shared_ptr<const NavigateToPose::Feedback> feedback) {
-    this->feedbackCallback(goal_handle, feedback);
+  rclcpp_action::Client<NavigateWaypoint>::SendGoalOptions send_goal_options;
+  send_goal_options.goal_response_callback = [this](GoalHandle::SharedPtr goal_handle) {
+    this->goalResponseCallback(goal_handle);
+  };
+  send_goal_options.feedback_callback = [this](
+    GoalHandle::SharedPtr goal_handle,
+    const std::shared_ptr<const NavigateWaypoint::Feedback> feedback) {
+      this->feedbackCallback(goal_handle, feedback);
+    };
+  send_goal_options.result_callback = [this](const GoalHandle::WrappedResult & result) {
+    this->resultCallback(result);
   };
 
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    goal_handle_future_ = client_->async_send_goal(goal, send_goal_options);
-  }
+  client_->async_send_goal(goal, send_goal_options);
   publishState("forwarding_goal");
   return BT::NodeStatus::RUNNING;
 }
 
-BT::NodeStatus NavigateToPoseAction::onRunning()
+BT::NodeStatus NavigateWaypointAction::onRunning()
 {
   GoalHandle::SharedPtr goal_handle_to_cancel;
-  bool result_is_ready = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (canceled_) {
@@ -117,40 +122,16 @@ BT::NodeStatus NavigateToPoseAction::onRunning()
       return BT::NodeStatus::FAILURE;
     }
 
+    if (!goal_accepted_ && !result_ready_) {
+      return BT::NodeStatus::RUNNING;
+    }
+
     if (!goal_accepted_) {
-      if (!goal_handle_future_.valid()) {
-        publishState("failed");
-        return BT::NodeStatus::FAILURE;
-      }
-      if (goal_handle_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-        return BT::NodeStatus::RUNNING;
-      }
-
-      auto goal_handle = goal_handle_future_.get();
-      if (!goal_handle) {
-        result_ready_ = true;
-        result_code_ = rclcpp_action::ResultCode::ABORTED;
-        publishState("rejected");
-        return BT::NodeStatus::FAILURE;
-      }
-
-      active_goal_handle_ = std::move(goal_handle);
-      goal_accepted_ = true;
-      last_feedback_time_ = node_->now();
-      result_future_ = client_->async_get_result(active_goal_handle_);
-      publishState("running");
+      publishState("failed");
+      return BT::NodeStatus::FAILURE;
     }
 
-    if (result_future_.valid() &&
-      result_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
-    {
-      const auto wrapped_result = result_future_.get();
-      result_code_ = wrapped_result.code;
-      result_ready_ = true;
-      result_is_ready = true;
-    }
-
-    if (!result_is_ready) {
+    if (!result_ready_) {
       const double feedback_elapsed_sec = (node_->now() - last_feedback_time_).seconds();
       if (feedback_elapsed_sec > feedback_timeout_sec_) {
         goal_handle_to_cancel = active_goal_handle_;
@@ -169,12 +150,12 @@ BT::NodeStatus NavigateToPoseAction::onRunning()
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  if (result_code_ == rclcpp_action::ResultCode::SUCCEEDED) {
+  if (result_code_ == rclcpp_action::ResultCode::SUCCEEDED && result_accepted_) {
     publishState("succeeded");
     return BT::NodeStatus::SUCCESS;
   }
 
-  if (result_code_ == rclcpp_action::ResultCode::CANCELED) {
+  if (result_detail_.find("timeout") != std::string::npos) {
     publishState("timeout");
   } else {
     publishState("failed");
@@ -182,7 +163,7 @@ BT::NodeStatus NavigateToPoseAction::onRunning()
   return BT::NodeStatus::FAILURE;
 }
 
-void NavigateToPoseAction::onHalted()
+void NavigateWaypointAction::onHalted()
 {
   GoalHandle::SharedPtr goal_handle_to_cancel;
   {
@@ -196,13 +177,15 @@ void NavigateToPoseAction::onHalted()
   publishState("failed");
 }
 
-void NavigateToPoseAction::goalResponseCallback(GoalHandle::SharedPtr goal_handle)
+void NavigateWaypointAction::goalResponseCallback(GoalHandle::SharedPtr goal_handle)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!goal_handle) {
     goal_accepted_ = false;
     result_ready_ = true;
     result_code_ = rclcpp_action::ResultCode::ABORTED;
+    result_accepted_ = false;
+    result_detail_ = "goal_rejected";
     return;
   }
 
@@ -212,27 +195,36 @@ void NavigateToPoseAction::goalResponseCallback(GoalHandle::SharedPtr goal_handl
   publishState("running");
 }
 
-void NavigateToPoseAction::feedbackCallback(
+void NavigateWaypointAction::feedbackCallback(
   GoalHandle::SharedPtr,
-  const std::shared_ptr<const NavigateToPose::Feedback> feedback)
+  const std::shared_ptr<const NavigateWaypoint::Feedback> feedback)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!goal_accepted_) {
     return;
   }
 
-  (void)feedback;
+  if (feedback) {
+    result_detail_ = feedback->state;
+  }
   last_feedback_time_ = node_->now();
 }
 
-void NavigateToPoseAction::resultCallback(const GoalHandle::WrappedResult & result)
+void NavigateWaypointAction::resultCallback(const GoalHandle::WrappedResult & result)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   result_ready_ = true;
   result_code_ = result.code;
+  if (result.result) {
+    result_accepted_ = result.result->accepted;
+    result_detail_ = result.result->detail;
+  } else {
+    result_accepted_ = false;
+    result_detail_.clear();
+  }
 }
 
-void NavigateToPoseAction::publishGoal(const geometry_msgs::msg::PoseStamped & goal, const std::string & topic)
+void NavigateWaypointAction::publishGoal(const geometry_msgs::msg::PoseStamped & goal, const std::string & topic)
 {
   if (!node_) {
     return;
@@ -248,7 +240,7 @@ void NavigateToPoseAction::publishGoal(const geometry_msgs::msg::PoseStamped & g
   goal_pub_->publish(goal);
 }
 
-void NavigateToPoseAction::publishState(const std::string & state)
+void NavigateWaypointAction::publishState(const std::string & state)
 {
   if (!state_pub_) {
     return;

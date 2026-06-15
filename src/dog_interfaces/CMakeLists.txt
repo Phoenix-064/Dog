@@ -29,6 +29,7 @@ set(srv_files
 
 set(action_files
   "action/ExecuteBehavior.action"
+  "action/NavigateWaypoint.action"
   "action/PlaceBoxes.action"
 )
 

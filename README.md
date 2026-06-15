@@ -47,6 +47,7 @@ ros2 launch dog_behavior launch.py
 - 启动入口位于 src/dog_behavior/launch/launch.py。
 - 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_bt_node。
 - 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
+- 默认不启动目标点导航串口节点；实机导航闭环运行时使用 `use_nav_telemetry_serial:=true`。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
 
 ### 3.3 分终端启动（用于调试）
@@ -78,6 +79,10 @@ ros2 run dog_behavior dog_behavior_bt_node
 - serial_port（默认 /dev/ttyUSB0）：下位机行为执行串口
 - serial_baud_rate（默认 115200）：下位机行为执行串口波特率
 - serial_ack_timeout_ms（默认 1500）：下位机行为执行应答超时
+- use_nav_telemetry_serial（默认 false）：是否启动目标点导航串口 Action Server
+- nav_telemetry_serial_port（默认 /dev/ttyUSB1）：目标点导航串口
+- nav_telemetry_baud_rate（默认 115200）：目标点导航串口波特率
+- nav_telemetry_ack_timeout_ms（默认 10000）：等待 `RCArrivalMX` 到达回包的超时
 - match_type（默认 left，可选 left/right）：比赛类型，决定加载哪组导航坐标文件
 
 示例：
@@ -93,10 +98,10 @@ ros2 launch dog_behavior launch.py use_point_lio_rviz:=true
 ros2 launch dog_behavior launch.py use_perception_camera:=true
 
 # 仅启动核心包（关闭第三方）
-ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false use_nav2:=false
+ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
 
-# 实机闭环运行（启动抓取/放置串口桥）
-ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/ttyUSB0
+# 实机闭环运行（启动抓取/放置串口桥与目标点导航串口节点）
+ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/ttyUSB0 use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
 
 # 指定比赛类型（左侧/右侧）
 ros2 launch dog_behavior launch.py match_type:=right
@@ -111,8 +116,8 @@ ros2 pkg list | grep -E "dog_perception|dog_lifecycle|dog_behavior|dog_interface
 # 核对关键 topic 是否存在
 ros2 topic list | grep -E "/target/target_3d|/lifecycle/system_mode|/dog/global_pose"
 
-# 实机闭环时核对抓取/放置 Action Server
-ros2 action list | grep -E "/behavior/execute|/behavior/place_boxes"
+# 实机闭环时核对抓取/放置/目标点导航 Action Server
+ros2 action list | grep -E "/behavior/execute|/behavior/place_boxes|/behavior/nav_execute"
 
 # 目标、定位、系统模式就绪后触发行为树
 ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
@@ -148,11 +153,12 @@ flowchart LR
   E --> G["/lifecycle/health_alarm"]
   F --> H[dog_behavior]
   H --> I["/dog/global_pose"]
-  H --> J["/navigate_to_pose"]
+  H --> J["/behavior/nav_execute"]
   H --> K["/behavior/nav_exec_state"]
   H --> L["/behavior/execute"]
   H --> M["/behavior/place_boxes"]
-  L --> N[dog_serial_bridge]
+  J --> N[dog_serial_bridge]
+  L --> N
   M --> N
 ~~~
 

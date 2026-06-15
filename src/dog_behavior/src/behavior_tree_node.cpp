@@ -211,7 +211,7 @@ void BehaviorTreeNode::registerBuiltinNodes()
   factory_.registerNodeType<bt_nodes::WaitForPoseCondition>("WaitForPose");
   factory_.registerNodeType<bt_nodes::SelectWaypointAction>("SelectWaypoint");
   factory_.registerNodeType<bt_nodes::ExecuteBehaviorAction>("ExecuteBehaviorAction");
-  factory_.registerNodeType<bt_nodes::NavigateToPoseAction>("NavigateToPoseAction");
+  factory_.registerNodeType<bt_nodes::NavigateWaypointAction>("NavigateWaypointAction");
   factory_.registerNodeType<bt_nodes::SetBoxesTypeAction>("SetBoxesTypeAction");
   factory_.registerNodeType<bt_nodes::AdvancePlaceCounterAction>("AdvancePlaceCounterAction");
   factory_.registerNodeType<bt_nodes::PlaceRuleAction>("PlaceRuleAction");

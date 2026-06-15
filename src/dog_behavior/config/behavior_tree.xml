@@ -1,9 +1,9 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="PlaceAtGoal">
     <Sequence>
-      <NavigateToPoseAction
+      <NavigateWaypointAction
         goal="{place_goal}"
-        action_name="/navigate_to_pose"
+        action_name="/behavior/nav_execute"
         state_topic="/behavior/nav_exec_state"/>
       <AdvancePlaceCounterAction counter="{counter}" done="{place_done}"/>
       <PlaceRuleAction
@@ -45,17 +45,17 @@
 
       <SetBoxesTypeAction target_topic="/target/target_3d" timeout_ms="3000"/>
 
-      <NavigateToPoseAction
+      <NavigateWaypointAction
         goal="{WayPointGoal1}"
-        action_name="/navigate_to_pose"
+        action_name="/behavior/nav_execute"
         state_topic="/behavior/nav_exec_state"/>
-      <NavigateToPoseAction
+      <NavigateWaypointAction
         goal="{WayPointGoal2}"
-        action_name="/navigate_to_pose"
+        action_name="/behavior/nav_execute"
         state_topic="/behavior/nav_exec_state"/>
-      <NavigateToPoseAction
+      <NavigateWaypointAction
         goal="{WayPointGoal3}"
-        action_name="/navigate_to_pose"
+        action_name="/behavior/nav_execute"
         state_topic="/behavior/nav_exec_state"/>
 
       <PublishMathAnswerAction
@@ -72,9 +72,9 @@
       <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal3}"/>
       <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal4}"/>
 
-      <NavigateToPoseAction
+      <NavigateWaypointAction
         goal="{WayPointGoal4}"
-        action_name="/navigate_to_pose"
+        action_name="/behavior/nav_execute"
         state_topic="/behavior/nav_exec_state"/>
 
       <ExecuteBehaviorAction
