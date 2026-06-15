@@ -90,6 +90,10 @@ def generate_launch_description() -> LaunchDescription:
     # Bring up all first-party and third-party runtime components from one entrypoint.
     use_point_lio_rviz = LaunchConfiguration("use_point_lio_rviz")
     use_perception_camera = LaunchConfiguration("use_perception_camera")
+    use_serial_bridge = LaunchConfiguration("use_serial_bridge")
+    serial_port = LaunchConfiguration("serial_port")
+    serial_baud_rate = LaunchConfiguration("serial_baud_rate")
+    serial_ack_timeout_ms = LaunchConfiguration("serial_ack_timeout_ms")
     use_nav_telemetry_serial = LaunchConfiguration("use_nav_telemetry_serial")
     nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
     nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
@@ -148,6 +152,30 @@ def generate_launch_description() -> LaunchDescription:
         "goal_frame_id",
         default_value="map",
         description="Frame id for behavior tree navigation goals.",
+    )
+
+    declare_use_serial_bridge = DeclareLaunchArgument(
+        "use_serial_bridge",
+        default_value="false",
+        description="Whether to start the behavior command serial bridge.",
+    )
+
+    declare_serial_port = DeclareLaunchArgument(
+        "serial_port",
+        default_value="/dev/ttyUSB0",
+        description="Serial port for behavior command bridge.",
+    )
+
+    declare_serial_baud_rate = DeclareLaunchArgument(
+        "serial_baud_rate",
+        default_value="115200",
+        description="Baud rate for behavior command bridge serial port.",
+    )
+
+    declare_serial_ack_timeout_ms = DeclareLaunchArgument(
+        "serial_ack_timeout_ms",
+        default_value="1500",
+        description="Ack timeout in milliseconds for behavior command bridge.",
     )
 
     declare_use_nav_telemetry_serial = DeclareLaunchArgument(
@@ -239,6 +267,22 @@ def generate_launch_description() -> LaunchDescription:
         executable="dog_lifecycle_node",
         name="dog_lifecycle",
         output="screen",
+        parameters=[{
+            "valid_frame_topic": "/target/target_3d",
+        }],
+    )
+
+    serial_bridge_node = Node(
+        package="dog_serial_bridge",
+        executable="dog_serial_bridge_node",
+        name="dog_serial_bridge",
+        output="screen",
+        condition=IfCondition(use_serial_bridge),
+        parameters=[{
+            "serial_port": serial_port,
+            "baud_rate": ParameterValue(serial_baud_rate, value_type=int),
+            "ack_timeout_ms": ParameterValue(serial_ack_timeout_ms, value_type=int),
+        }],
     )
 
     nav_telemetry_serial_node = Node(
@@ -282,6 +326,10 @@ def generate_launch_description() -> LaunchDescription:
         declare_use_nav2,
         declare_nav2_params_file,
         declare_goal_frame_id,
+        declare_use_serial_bridge,
+        declare_serial_port,
+        declare_serial_baud_rate,
+        declare_serial_ack_timeout_ms,
         declare_use_nav_telemetry_serial,
         declare_nav_telemetry_serial_port,
         declare_nav_telemetry_baud_rate,
@@ -297,6 +345,7 @@ def generate_launch_description() -> LaunchDescription:
         perception_node,
         perception_camera_node,
         lifecycle_node,
+        serial_bridge_node,
         nav_telemetry_serial_node,
         static_map_camera_tf,
         behavior_node,

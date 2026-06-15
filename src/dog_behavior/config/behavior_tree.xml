@@ -43,7 +43,7 @@
       <CheckSystemMode mode="{system_mode}" expected_mode="normal"/>
       <WaitForPose has_pose="{has_current_pose}" timeout_ms="5000"/>
 
-      <SetBoxesTypeAction/>
+      <SetBoxesTypeAction target_topic="/target/target_3d" timeout_ms="3000"/>
 
       <NavigateToPoseAction
         goal="{WayPointGoal1}"

@@ -46,6 +46,7 @@ ros2 launch dog_behavior launch.py
 说明：
 - 启动入口位于 src/dog_behavior/launch/launch.py。
 - 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_bt_node。
+- 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
 
 ### 3.3 分终端启动（用于调试）
@@ -73,6 +74,10 @@ ros2 run dog_behavior dog_behavior_bt_node
 - use_point_lio（默认 true）：是否启动 point_lio
 - use_point_lio_rviz（默认 false）：是否让 point_lio 同时启动 RViz
 - use_perception_camera（默认 false）：是否启动 dog_perception_camera_node
+- use_serial_bridge（默认 false）：是否启动 dog_serial_bridge_node，提供抓取/放置 Action Server
+- serial_port（默认 /dev/ttyUSB0）：下位机行为执行串口
+- serial_baud_rate（默认 115200）：下位机行为执行串口波特率
+- serial_ack_timeout_ms（默认 1500）：下位机行为执行应答超时
 - match_type（默认 left，可选 left/right）：比赛类型，决定加载哪组导航坐标文件
 
 示例：
@@ -88,7 +93,10 @@ ros2 launch dog_behavior launch.py use_point_lio_rviz:=true
 ros2 launch dog_behavior launch.py use_perception_camera:=true
 
 # 仅启动核心包（关闭第三方）
-ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
+ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false use_nav2:=false
+
+# 实机闭环运行（启动抓取/放置串口桥）
+ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/ttyUSB0
 
 # 指定比赛类型（左侧/右侧）
 ros2 launch dog_behavior launch.py match_type:=right
@@ -98,10 +106,16 @@ ros2 launch dog_behavior launch.py match_type:=right
 
 ~~~bash
 # 核对核心包可见
-ros2 pkg list | grep -E "dog_perception|dog_lifecycle|dog_behavior|dog_interfaces"
+ros2 pkg list | grep -E "dog_perception|dog_lifecycle|dog_behavior|dog_interfaces|dog_serial_bridge"
 
 # 核对关键 topic 是否存在
 ros2 topic list | grep -E "/target/target_3d|/lifecycle/system_mode|/dog/global_pose"
+
+# 实机闭环时核对抓取/放置 Action Server
+ros2 action list | grep -E "/behavior/execute|/behavior/place_boxes"
+
+# 目标、定位、系统模式就绪后触发行为树
+ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
 ~~~
 
 ## 6. 项目结构与职责
@@ -112,7 +126,8 @@ Dog/
 │   ├── dog_interfaces/   # msg/srv/action 统一契约
 │   ├── dog_perception/   # 感知与目标结果输出
 │   ├── dog_lifecycle/    # 健康监控、降级与系统模式
-│   └── dog_behavior/     # 行为执行与 Action 编排
+│   ├── dog_behavior/     # 行为执行与 Action 编排
+│   └── dog_serial_bridge/# 下位机串口动作桥与导航遥测
 ├── 3rd_party/
 │   ├── livox_ros_driver2/
 │   └── point_lio/
@@ -135,6 +150,10 @@ flowchart LR
   H --> I["/dog/global_pose"]
   H --> J["/navigate_to_pose"]
   H --> K["/behavior/nav_exec_state"]
+  H --> L["/behavior/execute"]
+  H --> M["/behavior/place_boxes"]
+  L --> N[dog_serial_bridge]
+  M --> N
 ~~~
 
 ## 8. 开发与测试
@@ -143,7 +162,7 @@ flowchart LR
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-colcon build --packages-select dog_interfaces dog_perception dog_lifecycle dog_behavior
+colcon build --packages-select dog_interfaces dog_perception dog_lifecycle dog_behavior dog_serial_bridge
 source install/setup.bash
 ~~~
 

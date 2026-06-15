@@ -7,7 +7,8 @@ namespace dog_behavior::bt_nodes
 {
 
 SetBoxesTypeAction::SetBoxesTypeAction(const std::string & name, const BT::NodeConfiguration & config)
-: BT::SyncActionNode(name, config)
+: BT::StatefulActionNode(name, config)
+, timeout_ms_(3000)
 , subscription_initialized_(false)
 , boxes_ready_once_(false)
 {
@@ -15,10 +16,13 @@ SetBoxesTypeAction::SetBoxesTypeAction(const std::string & name, const BT::NodeC
 
 BT::PortsList SetBoxesTypeAction::providedPorts()
 {
-  return {};
+  return {
+    BT::InputPort<std::string>("target_topic", "/target/target_3d", "target 3d array topic"),
+    BT::InputPort<int>("timeout_ms", 3000, "target wait timeout milliseconds"),
+  };
 }
 
-BT::NodeStatus SetBoxesTypeAction::tick()
+BT::NodeStatus SetBoxesTypeAction::onStart()
 {
   if (!config().blackboard) {
     return BT::NodeStatus::FAILURE;
@@ -28,10 +32,43 @@ BT::NodeStatus SetBoxesTypeAction::tick()
     return BT::NodeStatus::SUCCESS;
   }
 
-  if (!ensureSubscription()) {
+  const auto target_topic_input = getInput<std::string>("target_topic");
+  const auto timeout_input = getInput<int>("timeout_ms");
+  if (!target_topic_input) {
     return BT::NodeStatus::FAILURE;
   }
 
+  timeout_ms_ = timeout_input && timeout_input.value() > 0 ? timeout_input.value() : 3000;
+
+  if (!ensureSubscription(target_topic_input.value())) {
+    return BT::NodeStatus::FAILURE;
+  }
+
+  wait_start_time_ = node_->now();
+  return tryCommitBoxes();
+}
+
+BT::NodeStatus SetBoxesTypeAction::onRunning()
+{
+  const auto status = tryCommitBoxes();
+  if (status != BT::NodeStatus::RUNNING) {
+    return status;
+  }
+
+  const auto elapsed_ms = (node_->now() - wait_start_time_).nanoseconds() / 1000000;
+  if (elapsed_ms >= timeout_ms_) {
+    return BT::NodeStatus::FAILURE;
+  }
+
+  return BT::NodeStatus::RUNNING;
+}
+
+void SetBoxesTypeAction::onHalted()
+{
+}
+
+BT::NodeStatus SetBoxesTypeAction::tryCommitBoxes()
+{
   dog_interfaces::msg::Target3DArray::ConstSharedPtr boxes;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -39,7 +76,7 @@ BT::NodeStatus SetBoxesTypeAction::tick()
   }
 
   if (!boxes) {
-    return BT::NodeStatus::FAILURE;
+    return BT::NodeStatus::RUNNING;
   }
 
   const auto boxes_type_list = sortToTwoRows(*boxes);
@@ -50,9 +87,9 @@ BT::NodeStatus SetBoxesTypeAction::tick()
   return BT::NodeStatus::SUCCESS;
 }
 
-bool SetBoxesTypeAction::ensureSubscription()
+bool SetBoxesTypeAction::ensureSubscription(const std::string & target_topic)
 {
-  if (subscription_initialized_) {
+  if (subscription_initialized_ && target_topic_ == target_topic) {
     return true;
   }
 
@@ -66,8 +103,13 @@ bool SetBoxesTypeAction::ensureSubscription()
     return false;
   }
 
+  target_topic_ = target_topic;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_boxes_.reset();
+  }
   subscription_ = node_->create_subscription<dog_interfaces::msg::Target3DArray>(
-    "/target/target_3d",
+    target_topic_,
     rclcpp::QoS(10),
     [this](const dog_interfaces::msg::Target3DArray::ConstSharedPtr msg) {
       this->boxesCallback(msg);

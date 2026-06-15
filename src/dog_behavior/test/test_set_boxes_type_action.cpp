@@ -67,9 +67,10 @@ TEST_F(SetBoxesTypeActionNodeTest, SortsBoxesAndCachesResult)
 {
   auto bt_node = std::make_shared<rclcpp::Node>("bt_set_boxes_type_node");
   auto io_node = std::make_shared<rclcpp::Node>("bt_set_boxes_type_io");
+  const std::string target_topic = "/test/target/set_boxes_sort";
 
   auto pub = io_node->create_publisher<dog_interfaces::msg::Target3DArray>(
-    "/target/target_3d",
+    target_topic,
     rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -85,18 +86,18 @@ TEST_F(SetBoxesTypeActionNodeTest, SortsBoxesAndCachesResult)
   const std::string xml =
     "<root main_tree_to_execute=\"Main\">"
     "  <BehaviorTree ID=\"Main\">"
-    "    <SetBoxesTypeAction/>"
+    "    <SetBoxesTypeAction target_topic=\"/test/target/set_boxes_sort\" timeout_ms=\"1000\"/>"
     "  </BehaviorTree>"
     "</root>";
 
   auto tree = factory.createTreeFromText(xml, blackboard);
-  EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::FAILURE);
+  EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::RUNNING);
 
   ASSERT_TRUE(waitUntil(
     executor,
     std::chrono::milliseconds(1000),
-    [&io_node]() {
-      return io_node->count_subscribers("/target/target_3d") > 0u;
+    [&io_node, &target_topic]() {
+      return io_node->count_subscribers(target_topic) > 0u;
     }));
 
   dog_interfaces::msg::Target3DArray boxes;
@@ -126,6 +127,42 @@ TEST_F(SetBoxesTypeActionNodeTest, SortsBoxesAndCachesResult)
   EXPECT_GT(blackboard->get<int64_t>("boxes_capture_stamp"), 0);
 
   EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::SUCCESS);
+
+  executor.remove_node(io_node);
+  executor.remove_node(bt_node);
+}
+
+TEST_F(SetBoxesTypeActionNodeTest, FailsAfterTimeoutWhenNoBoxesArrive)
+{
+  auto bt_node = std::make_shared<rclcpp::Node>("bt_set_boxes_timeout_node");
+  auto io_node = std::make_shared<rclcpp::Node>("bt_set_boxes_timeout_io");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(bt_node);
+  executor.add_node(io_node);
+
+  BT::BehaviorTreeFactory factory;
+  factory.registerNodeType<dog_behavior::bt_nodes::SetBoxesTypeAction>("SetBoxesTypeAction");
+
+  auto blackboard = BT::Blackboard::create();
+  blackboard->set("ros_node", std::static_pointer_cast<rclcpp::Node>(bt_node));
+
+  const std::string xml =
+    "<root main_tree_to_execute=\"Main\">"
+    "  <BehaviorTree ID=\"Main\">"
+    "    <SetBoxesTypeAction target_topic=\"/test/target/set_boxes_timeout\" timeout_ms=\"30\"/>"
+    "  </BehaviorTree>"
+    "</root>";
+
+  auto tree = factory.createTreeFromText(xml, blackboard);
+  EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::RUNNING);
+
+  ASSERT_TRUE(waitUntil(
+    executor,
+    std::chrono::milliseconds(1000),
+    [&tree]() {
+      return tree.tickRoot() == BT::NodeStatus::FAILURE;
+    }));
 
   executor.remove_node(io_node);
   executor.remove_node(bt_node);
