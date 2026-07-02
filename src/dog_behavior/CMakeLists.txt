@@ -26,6 +26,7 @@ find_package(yaml-cpp REQUIRED)
 add_library(${PROJECT_NAME}_lib
   src/behavior_tree_node.cpp
   src/bt_nodes/advance_place_counter_action.cpp
+  src/bt_nodes/auto_success_action.cpp
   src/bt_nodes/check_system_mode.cpp
   src/bt_nodes/execute_place_boxes_action.cpp
   src/bt_nodes/wait_for_pose_condition.cpp
@@ -96,6 +97,7 @@ if(BUILD_TESTING)
     target_compile_definitions(test_behavior_tree_node PRIVATE
       DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/behavior_tree_test.xml"
       DOG_BEHAVIOR_PHASE3_BT_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/behavior_tree.xml"
+      DOG_BEHAVIOR_NAV_SERIAL_TEST_BT_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/behavior_tree_nav_serial_test.xml"
     )
     target_link_libraries(test_behavior_tree_node ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_behavior_tree_node
@@ -104,6 +106,8 @@ if(BUILD_TESTING)
       std_msgs
       geometry_msgs
     )
+    set_tests_properties(test_behavior_tree_node
+      PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 
   ament_add_gtest(test_check_system_mode test/test_check_system_mode.cpp)
@@ -112,6 +116,17 @@ if(BUILD_TESTING)
     ament_target_dependencies(test_check_system_mode
       behaviortree_cpp_v3
     )
+  endif()
+
+  ament_add_gtest(test_auto_success_action test/test_auto_success_action.cpp)
+  if(TARGET test_auto_success_action)
+    target_link_libraries(test_auto_success_action ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_auto_success_action
+      behaviortree_cpp_v3
+      rclcpp
+    )
+    set_tests_properties(test_auto_success_action
+      PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 
   ament_add_gtest(test_wait_for_pose_condition test/test_wait_for_pose_condition.cpp)

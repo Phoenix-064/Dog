@@ -1,6 +1,6 @@
 # dog_behavior AI 开发参考（当前代码基线）
 
-本文档描述的是当前代码基线（截至 2026-06-14），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
+本文档描述的是当前代码基线（截至 2026-06-15），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
 
 适用范围：`src/dog_behavior` 包。
 
@@ -12,7 +12,8 @@
 
 1. 运行入口为 `BehaviorTreeNode`（可执行：`dog_behavior_bt_node`）。
 2. BT 叶子节点直接对接 `ExecuteBehavior`、串口目标点导航 `NavigateWaypoint`、`PlaceBoxes`，不再使用 Nav2。
-3. `dog_behavior::utils` 提供字符串协议解析与 pose 校验公共工具。
+3. `test_mode:=true` 时加载导航/串口/PointLIO 测试树，抓取/放置由 `AutoSuccessAction` 自动放行。
+4. `dog_behavior::utils` 提供字符串协议解析与 pose 校验公共工具。
 
 数据主链路：
 
@@ -38,6 +39,7 @@ flowchart TD
   T[SetBoxesTypeAction] --> U[/target/target_3d Topic]
   V[ExecutePlaceBoxesAction] --> W[/behavior/place_boxes Action Client]
   X[PublishMathAnswerAction] --> Y[/math_answer Topic]
+  AA[AutoSuccessAction] --> AB[test_mode auto_success]
 ```
 
 ---
@@ -61,6 +63,7 @@ flowchart TD
 11. [src/dog_behavior/include/dog_behavior/bt_nodes/place_index_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/place_index_action.hpp)
 12. [src/dog_behavior/include/dog_behavior/bt_nodes/execute_place_boxes_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/execute_place_boxes_action.hpp)
 13. [src/dog_behavior/include/dog_behavior/bt_nodes/publish_math_answer_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/publish_math_answer_action.hpp)
+14. [src/dog_behavior/include/dog_behavior/bt_nodes/auto_success_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/auto_success_action.hpp)
 
 实现：
 
@@ -78,6 +81,7 @@ flowchart TD
 12. [src/dog_behavior/src/bt_nodes/place_index_action.cpp](../src/dog_behavior/src/bt_nodes/place_index_action.cpp)
 13. [src/dog_behavior/src/bt_nodes/execute_place_boxes_action.cpp](../src/dog_behavior/src/bt_nodes/execute_place_boxes_action.cpp)
 14. [src/dog_behavior/src/bt_nodes/publish_math_answer_action.cpp](../src/dog_behavior/src/bt_nodes/publish_math_answer_action.cpp)
+15. [src/dog_behavior/src/bt_nodes/auto_success_action.cpp](../src/dog_behavior/src/bt_nodes/auto_success_action.cpp)
 
 入口与启动：
 
@@ -88,8 +92,9 @@ flowchart TD
 
 1. [src/dog_behavior/config/behavior_tree.xml](../src/dog_behavior/config/behavior_tree.xml)
 2. [src/dog_behavior/config/behavior_tree_test.xml](../src/dog_behavior/config/behavior_tree_test.xml)
-3. [src/dog_behavior/config/waypoints_left.yaml](../src/dog_behavior/config/waypoints_left.yaml)
-4. [src/dog_behavior/config/waypoints_right.yaml](../src/dog_behavior/config/waypoints_right.yaml)
+3. [src/dog_behavior/config/behavior_tree_nav_serial_test.xml](../src/dog_behavior/config/behavior_tree_nav_serial_test.xml)
+4. [src/dog_behavior/config/waypoints_left.yaml](../src/dog_behavior/config/waypoints_left.yaml)
+5. [src/dog_behavior/config/waypoints_right.yaml](../src/dog_behavior/config/waypoints_right.yaml)
 
 构建与依赖：
 
@@ -114,6 +119,7 @@ flowchart TD
 11. [src/dog_behavior/test/test_place_index_action.cpp](../src/dog_behavior/test/test_place_index_action.cpp)
 12. [src/dog_behavior/test/test_execute_place_boxes_action.cpp](../src/dog_behavior/test/test_execute_place_boxes_action.cpp)
 13. [src/dog_behavior/test/test_publish_math_answer_action.cpp](../src/dog_behavior/test/test_publish_math_answer_action.cpp)
+14. [src/dog_behavior/test/test_auto_success_action.cpp](../src/dog_behavior/test/test_auto_success_action.cpp)
 
 ---
 
@@ -131,6 +137,7 @@ flowchart TD
 4. 订阅 `/lifecycle/system_mode` 与 `/lifecycle/recovery_context`，将结果写入黑板。
 5. 通过 `bt_tick_period_ms` 定时 `tickRoot()`，并在树终态（SUCCESS/FAILURE）后停止 tick。
 6. 初始化并维护放置链路所需黑板键（counter、箱体计数、航点 goal 等）。
+7. 支持通过 `tree_xml_file_path` 参数切换行为树；launch 在 `test_mode=true` 时切到测试树。
 
 关键约束：
 
@@ -155,7 +162,8 @@ flowchart TD
 6. `PlaceIndexAction`：生成 `local_indices`、`payload`、`count_after_success`、`has_target`。
 7. `ExecutePlaceBoxesAction`：调用 `/behavior/place_boxes`（`dog_interfaces/action/PlaceBoxes`），成功且 accepted 时提交对应类型计数。
 8. `PublishMathAnswerAction`：在指定航点匹配时向 `/math_answer` 发布答案。
-9. `SelectWaypointAction`：可用航点选择节点（已注册，当前主树未启用）。
+9. `AutoSuccessAction`：测试模式专用同步叶子，记录 `test_mode_auto_success` 日志并直接返回 SUCCESS。
+10. `SelectWaypointAction`：可用航点选择节点（已注册，当前主树未启用）。
 
 ### 3.3 payload_utils
 
@@ -271,6 +279,8 @@ Topic：
 10. `WaitForPose.timeout_ms` = `5000`
 11. `PublishMathAnswerAction.answer` = `42`
 12. `PublishMathAnswerAction.topic_name` = `/math_answer`
+13. `AutoSuccessAction.label` = `auto_success`
+14. `AutoSuccessAction.result_code_text` 输出 `auto_success`
 
 ---
 
@@ -330,9 +340,32 @@ Topic：
 
 ---
 
-## 9. 测试与覆盖基线
+## 9. 导航/串口/PointLIO 测试树
 
-当前 gtest 目标共 13 个：
+测试入口：`ros2 launch dog_behavior launch.py test_mode:=true ...`
+
+测试树文件：`behavior_tree_nav_serial_test.xml`。
+
+运行语义：
+
+1. 保留 `CheckSystemMode` 与 `WaitForPose`，仍要求 lifecycle mode 为 normal 且已有 point_lio 里程计位姿。
+2. 保留所有 `NavigateWaypointAction`，继续向 `/behavior/nav_execute` 发送目标；目标点串口节点仍等待 `RCArrivalMX`。
+3. 不包含 `SetBoxesTypeAction` 与 `PublishMathAnswerAction`，因此不等待 `/target/target_3d`、不触发 YOLO/视觉识别。
+4. 两次抓取与每个放置步骤使用 `AutoSuccessAction`，只记录 `test_mode_auto_success` 日志并返回 SUCCESS。
+5. launch 在 `test_mode=true` 时不启动 `dog_perception_node`、`dog_perception_camera_node`、`dog_serial_bridge_node`，但仍允许启动 Livox、point_lio 与 `dog_serial_bridge_nav_telemetry_node`。
+6. launch 在 `test_mode=true` 时将 `dog_lifecycle_node.heartbeat_timeout_ms` 设为 `600000`，避免无视觉帧时过早降级。
+
+推荐命令：
+
+```bash
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
+```
+
+---
+
+## 10. 测试与覆盖基线
+
+当前 gtest 目标共 14 个：
 
 1. `test_behavior_tree_node`：主节点参数、触发执行、模式阻断、XML 结构回归检查。
 2. `test_payload_utils`：字符串协议解析、完成态判定、pose 有效性校验。
@@ -347,10 +380,11 @@ Topic：
 11. `test_place_index_action`：索引筛选、payload 生成与无目标分支。
 12. `test_execute_place_boxes_action`：accepted 成功提交计数、未 accepted 保持计数、无目标跳过。
 13. `test_publish_math_answer_action`：指定航点发布与不匹配失败。
+14. `test_auto_success_action`：测试模式自动成功叶子输出 `auto_success`。
 
 ---
 
-## 10. 构建与运行参考
+## 11. 构建与运行参考
 
 构建定义：[src/dog_behavior/CMakeLists.txt](../src/dog_behavior/CMakeLists.txt)
 
@@ -358,7 +392,7 @@ Topic：
 
 1. `${PROJECT_NAME}_lib`
 2. `${PROJECT_NAME}_bt_node`
-3. 13 个 gtest 目标（见第 9 节）
+3. 14 个 gtest 目标（见第 10 节）
 
 推荐命令：
 
@@ -368,10 +402,11 @@ Topic：
 4. `colcon test-result --all --verbose`
 5. `source install/setup.bash`
 6. `ros2 launch dog_behavior launch.py`
+7. `ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1`
 
 ---
 
-## 11. 与重构计划的衔接
+## 12. 与重构计划的衔接
 
 相关计划文档：[docs/behavior_tree_refactor_plan.md](behavior_tree_refactor_plan.md)
 

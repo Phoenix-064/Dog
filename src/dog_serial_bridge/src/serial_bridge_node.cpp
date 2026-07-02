@@ -20,6 +20,29 @@ std::string trimLine(std::string line)
   return line;
 }
 
+std::string escapeSerialPayload(const std::string & payload)
+{
+  std::string escaped;
+  escaped.reserve(payload.size());
+  for (const char value : payload) {
+    switch (value) {
+      case '\n':
+        escaped += "\\n";
+        break;
+      case '\r':
+        escaped += "\\r";
+        break;
+      case '\t':
+        escaped += "\\t";
+        break;
+      default:
+        escaped.push_back(value);
+        break;
+    }
+  }
+  return escaped;
+}
+
 }  // namespace
 
 SerialBridgeNode::SerialBridgeNode(
@@ -179,7 +202,13 @@ void SerialBridgeNode::readerLoop()
       continue;
     }
     if (result.status == SerialConnection::ReadStatus::kLine) {
-      dispatchSerialLine(trimLine(std::move(result.line)));
+      const auto line = trimLine(std::move(result.line));
+      RCLCPP_INFO(
+        get_logger(),
+        "serial_rx port=%s data=%s",
+        serial_config_.port.c_str(),
+        escapeSerialPayload(line).c_str());
+      dispatchSerialLine(line);
       continue;
     }
 
@@ -366,10 +395,16 @@ void SerialBridgeNode::executePickupGoal(const std::shared_ptr<ExecuteGoalHandle
   }
 
   std::string error;
+  const auto frame = appendConfiguredNewline(buildPickupCommand());
+  RCLCPP_INFO(
+    get_logger(),
+    "serial_tx port=%s data=%s",
+    serial_config_.port.c_str(),
+    escapeSerialPayload(frame).c_str());
   {
     std::lock_guard<std::mutex> lock(serial_mutex_);
     if (!serial_connection_ || !serial_ready_ ||
-      !serial_connection_->write(appendConfiguredNewline(buildPickupCommand()), error))
+      !serial_connection_->write(frame, error))
     {
       const auto detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
       serial_ready_ = false;
@@ -442,10 +477,16 @@ void SerialBridgeNode::executePlaceGoal(
   }
 
   std::string error;
+  const auto frame = appendConfiguredNewline(buildPlaceCommand(payload));
+  RCLCPP_INFO(
+    get_logger(),
+    "serial_tx port=%s data=%s",
+    serial_config_.port.c_str(),
+    escapeSerialPayload(frame).c_str());
   {
     std::lock_guard<std::mutex> lock(serial_mutex_);
     if (!serial_connection_ || !serial_ready_ ||
-      !serial_connection_->write(appendConfiguredNewline(buildPlaceCommand(payload)), error))
+      !serial_connection_->write(frame, error))
     {
       const auto detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
       serial_ready_ = false;

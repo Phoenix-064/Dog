@@ -37,6 +37,12 @@
 
 ## 2. 运行时职责概览
 
+启动约束：
+
+1. 默认 `ros2 launch dog_behavior launch.py` 会启动 `dog_perception_node`。
+2. 导航/串口/PointLIO 联调使用 `test_mode:=true` 时，launch 不启动 `dog_perception_node` 和 `dog_perception_camera_node`，因此不会进行 YOLO/箱体/数字识别，也不会发布 `/target/target_3d`。
+3. `test_mode:=true` 的行为树不包含 `SetBoxesTypeAction`，不会等待感知结果。
+
 PerceptionNode 运行时主线：
 
 1. 同步图像与点云，驱动 3D 目标求解并发布 Target3DArray。

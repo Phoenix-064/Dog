@@ -35,6 +35,11 @@ LifecycleNode 在运行时承担四条主线：
 3. 急停模式切换：estop 信号驱动 system mode 在 normal 与 idle_spinning 间切换。
 4. 启停持久化：configure 阶段加载并缓存恢复上下文，activate 阶段发布；析构清理持久化文件。
 
+启动约束：
+
+1. `dog_behavior/launch/launch.py` 默认传入 `valid_frame_topic=/target/target_3d`。
+2. 导航/串口/PointLIO 联调使用 `test_mode:=true` 时不启动感知节点，launch 会将 `heartbeat_timeout_ms` 设为 `600000`，避免无视觉有效帧导致联调过程过早进入重连或受控降级。
+
 ## 3. 函数调用结构（可检索）
 
 ### 3.1 启动与初始化链
@@ -213,6 +218,7 @@ Load 回退策略：
 
 1. reconnect_pending_timeout_ms 小于等于 0 时会自适应计算，并被限制在 restart_window_ms 以内，保证 attempt 能在窗口内累积触发降级。
 2. max_restart_attempts、restart_window_ms、heartbeat_timeout_ms 等无效值会回退到安全默认值。
+3. `test_mode:=true` 是 launch 层参数覆盖，不改变 `dog_lifecycle` 包内默认值；单独运行 `dog_lifecycle_node` 时仍使用包内默认心跳参数。
 
 样例配置文件：[src/dog_lifecycle/config/persistence.yaml](../src/dog_lifecycle/config/persistence.yaml)
 

@@ -28,6 +28,29 @@ std::string trimLine(std::string line)
   return line;
 }
 
+std::string escapeSerialPayload(const std::string & payload)
+{
+  std::string escaped;
+  escaped.reserve(payload.size());
+  for (const char value : payload) {
+    switch (value) {
+      case '\n':
+        escaped += "\\n";
+        break;
+      case '\r':
+        escaped += "\\r";
+        break;
+      case '\t':
+        escaped += "\\t";
+        break;
+      default:
+        escaped.push_back(value);
+        break;
+    }
+  }
+  return escaped;
+}
+
 bool isFinitePose(const geometry_msgs::msg::Pose & pose)
 {
   return std::isfinite(pose.position.x) &&
@@ -361,6 +384,11 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
   }
 
   std::string error;
+  RCLCPP_INFO(
+    get_logger(),
+    "nav_telemetry_serial_tx port=%s data=%s",
+    serial_config_.port.c_str(),
+    escapeSerialPayload(frame).c_str());
   if (!serial_connection->write(frame, error)) {
     const auto detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
     RCLCPP_ERROR(get_logger(), "nav_goal_write_failed detail=%s", detail.c_str());
@@ -480,6 +508,11 @@ bool NavTelemetrySerialNode::waitForArrival(
     }
     if (read_result.status == SerialConnection::ReadStatus::kLine) {
       const auto line = trimLine(read_result.line);
+      RCLCPP_INFO(
+        get_logger(),
+        "nav_telemetry_serial_rx port=%s data=%s",
+        serial_config_.port.c_str(),
+        escapeSerialPayload(line).c_str());
       if (line == kArrivalReply) {
         detail = "arrival_ok";
         return true;

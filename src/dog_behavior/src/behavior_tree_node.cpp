@@ -1,5 +1,6 @@
 #include "dog_behavior/behavior_tree_node.hpp"
 
+#include "dog_behavior/bt_nodes/auto_success_action.hpp"
 #include "dog_behavior/bt_nodes/check_system_mode.hpp"
 #include "dog_behavior/bt_nodes/advance_place_counter_action.hpp"
 #include "dog_behavior/bt_nodes/execute_place_boxes_action.hpp"
@@ -70,6 +71,13 @@ geometry_msgs::msg::PoseStamped defaultGoalPose(const std::string & frame_id)
   pose.header.frame_id = frame_id;
   pose.pose.orientation.w = 1.0;
   return pose;
+}
+
+double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q)
+{
+  const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+  const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+  return std::atan2(siny_cosp, cosy_cosp);
 }
 
 }  // namespace
@@ -207,6 +215,7 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 
 void BehaviorTreeNode::registerBuiltinNodes()
 {
+  factory_.registerNodeType<bt_nodes::AutoSuccessAction>("AutoSuccessAction");
   factory_.registerNodeType<bt_nodes::CheckSystemMode>("CheckSystemMode");
   factory_.registerNodeType<bt_nodes::WaitForPoseCondition>("WaitForPose");
   factory_.registerNodeType<bt_nodes::SelectWaypointAction>("SelectWaypoint");
@@ -320,6 +329,28 @@ void BehaviorTreeNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPt
     latest_pose_ = pose_msg;
     has_latest_pose_ = true;
   }
+
+  RCLCPP_DEBUG(
+    get_logger(),
+    "point_lio_pose topic_frame=%s publish_frame=%s stamp=%d.%u position=(%.3f, %.3f, %.3f) yaw=%.3f orientation=(%.6f, %.6f, %.6f, %.6f) linear=(%.3f, %.3f, %.3f) angular=(%.3f, %.3f, %.3f)",
+    msg->header.frame_id.c_str(),
+    pose_msg.header.frame_id.c_str(),
+    msg->header.stamp.sec,
+    msg->header.stamp.nanosec,
+    pose_msg.pose.position.x,
+    pose_msg.pose.position.y,
+    pose_msg.pose.position.z,
+    yawFromQuaternion(pose_msg.pose.orientation),
+    pose_msg.pose.orientation.x,
+    pose_msg.pose.orientation.y,
+    pose_msg.pose.orientation.z,
+    pose_msg.pose.orientation.w,
+    msg->twist.twist.linear.x,
+    msg->twist.twist.linear.y,
+    msg->twist.twist.linear.z,
+    msg->twist.twist.angular.x,
+    msg->twist.twist.angular.y,
+    msg->twist.twist.angular.z);
 
   global_pose_pub_->publish(pose_msg);
 }

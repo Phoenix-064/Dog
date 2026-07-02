@@ -1,0 +1,50 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="PlaceAtGoal">
+    <Sequence>
+      <NavigateWaypointAction
+        goal="{place_goal}"
+        action_name="/behavior/nav_execute"
+        state_topic="/behavior/nav_exec_state"/>
+      <AutoSuccessAction label="{place_label}" result_code_text="{place_result_code}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="MainTree">
+    <Sequence>
+      <CheckSystemMode mode="{system_mode}" expected_mode="normal"/>
+      <WaitForPose has_pose="{has_current_pose}" timeout_ms="5000"/>
+
+      <NavigateWaypointAction
+        goal="{WayPointGoal1}"
+        action_name="/behavior/nav_execute"
+        state_topic="/behavior/nav_exec_state"/>
+      <NavigateWaypointAction
+        goal="{WayPointGoal2}"
+        action_name="/behavior/nav_execute"
+        state_topic="/behavior/nav_exec_state"/>
+      <NavigateWaypointAction
+        goal="{WayPointGoal3}"
+        action_name="/behavior/nav_execute"
+        state_topic="/behavior/nav_exec_state"/>
+
+      <AutoSuccessAction label="pickup_first" result_code_text="{pickup_result_code}"/>
+
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal1}" place_label="place_1"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal2}" place_label="place_2"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal3}" place_label="place_3"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal4}" place_label="place_4"/>
+
+      <NavigateWaypointAction
+        goal="{WayPointGoal4}"
+        action_name="/behavior/nav_execute"
+        state_topic="/behavior/nav_exec_state"/>
+
+      <AutoSuccessAction label="pickup_second" result_code_text="{pickup_result_code}"/>
+
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal4}" place_label="place_4_reverse"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal3}" place_label="place_3_reverse"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal2}" place_label="place_2_reverse"/>
+      <SubTree ID="PlaceAtGoal" place_goal="{PlaceGoal1}" place_label="place_1_reverse"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

@@ -275,4 +275,21 @@ TEST(BehaviorTreeXmlPlanCoverageTest, UsesSerialWaypointNavigationInsteadOfNav2)
   EXPECT_NE(xml.find("/behavior/nav_execute"), std::string::npos);
 }
 
+TEST(BehaviorTreeXmlPlanCoverageTest, NavSerialTestTreeBypassesVisionAndGraspPlaceActions)
+{
+  const std::string xml = readTextFile(DOG_BEHAVIOR_NAV_SERIAL_TEST_BT_XML_PATH);
+  ASSERT_FALSE(xml.empty());
+
+  EXPECT_NE(xml.find("NavigateWaypointAction"), std::string::npos);
+  EXPECT_NE(xml.find("/behavior/nav_execute"), std::string::npos);
+  EXPECT_NE(xml.find("AutoSuccessAction"), std::string::npos);
+
+  EXPECT_EQ(xml.find("SetBoxesTypeAction"), std::string::npos);
+  EXPECT_EQ(xml.find("PublishMathAnswerAction"), std::string::npos);
+  EXPECT_EQ(xml.find("ExecuteBehaviorAction"), std::string::npos);
+  EXPECT_EQ(xml.find("ExecutePlaceBoxesAction"), std::string::npos);
+  EXPECT_EQ(xml.find("/behavior/execute"), std::string::npos);
+  EXPECT_EQ(xml.find("/behavior/place_boxes"), std::string::npos);
+}
+
 }  // namespace

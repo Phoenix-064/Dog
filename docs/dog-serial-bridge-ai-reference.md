@@ -165,6 +165,18 @@ launch 入口由 `dog_behavior/launch/launch.py` 提供，可选启用：
 ros2 launch dog_behavior launch.py use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1 nav_telemetry_ack_timeout_ms:=10000
 ```
 
+导航/串口/PointLIO 测试模式会跳过抓取/放置串口桥，但保留目标点导航串口闭环：
+
+```bash
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
+```
+
+测试模式约束：
+
+1. `dog_serial_bridge_node` 不启动，即 `/behavior/execute` 与 `/behavior/place_boxes` 不由串口桥提供。
+2. `dog_serial_bridge_nav_telemetry_node` 仍按 `use_nav_telemetry_serial:=true` 启动，`/behavior/nav_execute` 仍发送 `RCNAV` 并等待 `RCArrivalMX`。
+3. 抓取/放置动作由 `dog_behavior` 的 `AutoSuccessAction` 在 BT 内部直接成功，不等待 MCU 抓放回包。
+
 ---
 
 ## 4. 串口协议映射
@@ -323,6 +335,7 @@ state = waiting_arrival
 3. 未收到当前位置时 `cur_valid=0`，对应坐标填 `0.000`，frame 填 `unknown`。
 4. 目标位姿必须是有限数值且四元数范数合法，否则 Action goal 直接 `REJECT`。
 5. `RCNAV` 帧不包含 `state`、`goal_active` 或 `/behavior/nav_exec_state` 数据；行为层状态由 `dog_behavior` 的 BT 叶子发布。
+6. `test_mode:=true` 不改变目标点导航串口协议；它只绕过抓取/放置串口链路。
 
 ---
 

@@ -49,6 +49,7 @@ ros2 launch dog_behavior launch.py
 - 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
 - 默认不启动目标点导航串口节点；实机导航闭环运行时使用 `use_nav_telemetry_serial:=true`。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
+- 导航/串口/PointLIO 联调可使用 `test_mode:=true`，该模式不启动感知节点，不等待抓取/放置串口回包，导航串口仍真实等待 `RCArrivalMX`。
 
 ### 3.3 分终端启动（用于调试）
 
@@ -70,6 +71,7 @@ ros2 run dog_behavior dog_behavior_bt_node
 
 统一入口：ros2 launch dog_behavior launch.py
 
+- test_mode（默认 false）：导航/串口/PointLIO 测试模式；启用后使用 `behavior_tree_nav_serial_test.xml`，跳过 YOLO 与抓取/放置串口执行
 - use_livox（默认 true）：是否启动 livox_ros_driver2
 - livox_model（默认 mid360，可选 mid360/hap）：选择 Livox 配置
 - use_point_lio（默认 true）：是否启动 point_lio
@@ -102,6 +104,9 @@ ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
 
 # 实机闭环运行（启动抓取/放置串口桥与目标点导航串口节点）
 ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/ttyUSB0 use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
+
+# 导航/目标点串口/PointLIO 联调（MID360 与 point_lio 正常启动，抓取/放置自动成功，不启动 YOLO；test_mode 会自动开启 dog_behavior_bt debug 定位日志）
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
 
 # 指定比赛类型（左侧/右侧）
 ros2 launch dog_behavior launch.py match_type:=right

@@ -2,9 +2,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -50,8 +50,15 @@ def _create_optional_third_party_actions(context, *args, **kwargs):
 def _create_behavior_node(context, *args, **kwargs):
     match_type = LaunchConfiguration("match_type").perform(context)
     goal_frame_id = LaunchConfiguration("goal_frame_id").perform(context)
+    test_mode = LaunchConfiguration("test_mode").perform(context).lower() == "true"
     pkg_share = get_package_share_directory("dog_behavior")
     waypoints_file = os.path.join(pkg_share, "config", f"waypoints_{match_type}.yaml")
+    tree_xml_file_path = os.path.join(
+        pkg_share,
+        "config",
+        "behavior_tree_nav_serial_test.xml" if test_mode else "behavior_tree.xml",
+    )
+    log_level = "dog_behavior_bt:=debug" if test_mode else "dog_behavior_bt:=info"
 
     return [
         Node(
@@ -59,10 +66,12 @@ def _create_behavior_node(context, *args, **kwargs):
             executable="dog_behavior_bt_node",
             name="dog_behavior_bt",
             output="screen",
+            arguments=["--ros-args", "--log-level", log_level],
             parameters=[{
                 "match_type": match_type,
                 "waypoints_file": waypoints_file,
                 "goal_frame_id": goal_frame_id,
+                "tree_xml_file_path": tree_xml_file_path,
             }],
         ),
     ]
@@ -70,6 +79,7 @@ def _create_behavior_node(context, *args, **kwargs):
 
 def generate_launch_description() -> LaunchDescription:
     # Bring up all first-party and third-party runtime components from one entrypoint.
+    test_mode = LaunchConfiguration("test_mode")
     use_point_lio_rviz = LaunchConfiguration("use_point_lio_rviz")
     use_perception_camera = LaunchConfiguration("use_perception_camera")
     use_serial_bridge = LaunchConfiguration("use_serial_bridge")
@@ -86,6 +96,12 @@ def generate_launch_description() -> LaunchDescription:
     map_to_camera_roll = LaunchConfiguration("map_to_camera_roll")
     map_to_camera_pitch = LaunchConfiguration("map_to_camera_pitch")
     map_to_camera_yaw = LaunchConfiguration("map_to_camera_yaw")
+
+    declare_test_mode = DeclareLaunchArgument(
+        "test_mode",
+        default_value="false",
+        description="Enable navigation/serial/PointLIO test mode with vision and grasp/place bypassed.",
+    )
 
     declare_use_livox = DeclareLaunchArgument(
         "use_livox",
@@ -222,6 +238,7 @@ def generate_launch_description() -> LaunchDescription:
         executable="dog_perception_node",
         name="dog_perception",
         output="screen",
+        condition=UnlessCondition(test_mode),
     )
 
     perception_camera_node = Node(
@@ -229,7 +246,13 @@ def generate_launch_description() -> LaunchDescription:
         executable="dog_perception_camera_node",
         name="dog_perception_camera",
         output="screen",
-        condition=IfCondition(use_perception_camera),
+        condition=IfCondition(PythonExpression([
+            "'",
+            use_perception_camera,
+            "' == 'true' and '",
+            test_mode,
+            "' != 'true'",
+        ])),
     )
 
     lifecycle_node = Node(
@@ -239,6 +262,10 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[{
             "valid_frame_topic": "/target/target_3d",
+            "heartbeat_timeout_ms": ParameterValue(
+                PythonExpression(["600000 if '", test_mode, "' == 'true' else 2000"]),
+                value_type=int,
+            ),
         }],
     )
 
@@ -247,7 +274,13 @@ def generate_launch_description() -> LaunchDescription:
         executable="dog_serial_bridge_node",
         name="dog_serial_bridge",
         output="screen",
-        condition=IfCondition(use_serial_bridge),
+        condition=IfCondition(PythonExpression([
+            "'",
+            use_serial_bridge,
+            "' == 'true' and '",
+            test_mode,
+            "' != 'true'",
+        ])),
         parameters=[{
             "serial_port": serial_port,
             "baud_rate": ParameterValue(serial_baud_rate, value_type=int),
@@ -288,6 +321,7 @@ def generate_launch_description() -> LaunchDescription:
     behavior_node = OpaqueFunction(function=_create_behavior_node)
 
     return LaunchDescription([
+        declare_test_mode,
         declare_use_livox,
         declare_livox_model,
         declare_use_point_lio,
