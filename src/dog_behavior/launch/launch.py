@@ -298,6 +298,10 @@ def generate_launch_description() -> LaunchDescription:
             "serial_port": nav_telemetry_serial_port,
             "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
             "ack_timeout_ms": ParameterValue(nav_telemetry_ack_timeout_ms, value_type=int),
+            "send_shutdown_arrival_on_exit": ParameterValue(
+                PythonExpression(["'", test_mode, "' == 'true'"]),
+                value_type=bool,
+            ),
         }],
     )
 

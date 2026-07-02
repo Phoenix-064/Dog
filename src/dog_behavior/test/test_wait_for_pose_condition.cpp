@@ -3,7 +3,10 @@
 #include <behaviortree_cpp_v3/bt_factory.h>
 #include <gtest/gtest.h>
 
-TEST(WaitForPoseConditionNodeTest, ReturnsFailureWhenPoseNotReady)
+#include <chrono>
+#include <thread>
+
+TEST(WaitForPoseConditionNodeTest, ReturnsRunningWhilePoseNotReady)
 {
   BT::BehaviorTreeFactory factory;
   factory.registerNodeType<dog_behavior::bt_nodes::WaitForPoseCondition>("WaitForPose");
@@ -19,6 +22,27 @@ TEST(WaitForPoseConditionNodeTest, ReturnsFailureWhenPoseNotReady)
     "</root>";
 
   auto tree = factory.createTreeFromText(xml, blackboard);
+  EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::RUNNING);
+}
+
+TEST(WaitForPoseConditionNodeTest, ReturnsFailureAfterTimeout)
+{
+  BT::BehaviorTreeFactory factory;
+  factory.registerNodeType<dog_behavior::bt_nodes::WaitForPoseCondition>("WaitForPose");
+
+  auto blackboard = BT::Blackboard::create();
+  blackboard->set("has_pose", false);
+
+  const std::string xml =
+    "<root main_tree_to_execute=\"Main\">"
+    "  <BehaviorTree ID=\"Main\">"
+    "    <WaitForPose has_pose=\"{has_pose}\" timeout_ms=\"20\"/>"
+    "  </BehaviorTree>"
+    "</root>";
+
+  auto tree = factory.createTreeFromText(xml, blackboard);
+  EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::RUNNING);
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
   EXPECT_EQ(tree.tickRoot(), BT::NodeStatus::FAILURE);
 }
 

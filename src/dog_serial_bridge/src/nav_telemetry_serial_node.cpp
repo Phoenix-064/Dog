@@ -138,6 +138,8 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 , reconnect_period_ms_(1000)
 , sequence_(0U)
 , goal_reserved_(false)
+, send_shutdown_arrival_on_exit_(false)
+, shutdown_arrival_sent_(false)
 {
   declareParameters();
   loadParameters();
@@ -188,6 +190,7 @@ void NavTelemetrySerialNode::declareParameters()
   declare_parameter<int>("ack_timeout_ms", 10000);
   declare_parameter<int>("reconnect_period_ms", 1000);
   declare_parameter<bool>("write_newline", true);
+  declare_parameter<bool>("send_shutdown_arrival_on_exit", false);
   declare_parameter<std::string>("read_line_delimiter", "\\n");
 }
 
@@ -198,6 +201,7 @@ void NavTelemetrySerialNode::loadParameters()
   ack_timeout_ms_ = get_parameter("ack_timeout_ms").as_int();
   reconnect_period_ms_ = get_parameter("reconnect_period_ms").as_int();
   write_newline_ = get_parameter("write_newline").as_bool();
+  send_shutdown_arrival_on_exit_ = get_parameter("send_shutdown_arrival_on_exit").as_bool();
   serial_config_.line_delimiter = decodeDelimiter(get_parameter("read_line_delimiter").as_string());
 
   if (ack_timeout_ms_ <= 0) {
@@ -401,6 +405,11 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
     return;
   }
 
+  if (send_shutdown_arrival_on_exit_) {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    last_goal_pose_ = goal;
+  }
+
   feedback->progress = 0.5F;
   feedback->state = "waiting_arrival";
   goal_handle->publish_feedback(feedback);
@@ -447,7 +456,8 @@ bool NavTelemetrySerialNode::maybeReconnect()
 std::string NavTelemetrySerialNode::buildFrame(
   const rclcpp::Time & stamp,
   const PoseCache & current,
-  const PoseCache & goal)
+  const PoseCache & goal,
+  const std::string & event)
 {
   ++sequence_;
 
@@ -455,6 +465,9 @@ std::string NavTelemetrySerialNode::buildFrame(
   stream << std::fixed << std::setprecision(3);
   stream << "RCNAV;seq=" << sequence_
          << ";stamp_ms=" << (stamp.nanoseconds() / 1000000);
+  if (!event.empty()) {
+    stream << ";event=" << event;
+  }
   appendPoseFields(stream, "cur", current);
   appendPoseFields(stream, "goal", goal);
   return stream.str();
@@ -482,6 +495,57 @@ void NavTelemetrySerialNode::releaseGoalSlot()
 {
   std::lock_guard<std::mutex> lock(goal_mutex_);
   goal_reserved_ = false;
+}
+
+void NavTelemetrySerialNode::SendShutdownArrivalFrame()
+{
+  if (!send_shutdown_arrival_on_exit_ || shutdown_arrival_sent_) {
+    return;
+  }
+  shutdown_arrival_sent_ = true;
+
+  PoseCache goal;
+  {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    goal = last_goal_pose_;
+  }
+
+  if (!goal.valid) {
+    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip no_goal_cached");
+    return;
+  }
+
+  std::shared_ptr<SerialConnection> serial;
+  {
+    std::lock_guard<std::mutex> lock(serial_mutex_);
+    if (!serial_ready_ || !serial_connection_) {
+      RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip serial_not_ready");
+      return;
+    }
+    serial = serial_connection_;
+  }
+
+  PoseCache current;
+  {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    current = current_pose_;
+  }
+
+  const auto frame = appendConfiguredNewline(buildFrame(now(), current, goal, "shutdown_arrived"));
+  std::string error;
+  RCLCPP_INFO(
+    get_logger(),
+    "nav_shutdown_arrival_tx port=%s data=%s",
+    serial_config_.port.c_str(),
+    escapeSerialPayload(frame).c_str());
+  if (!serial->write(frame, error)) {
+    RCLCPP_WARN(
+      get_logger(),
+      "nav_shutdown_arrival_tx_failed detail=%s",
+      error.empty() ? "write_error" : error.c_str());
+  } else {
+    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_tx_done");
+  }
 }
 
 bool NavTelemetrySerialNode::waitForArrival(

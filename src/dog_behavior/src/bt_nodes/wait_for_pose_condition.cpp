@@ -44,14 +44,16 @@ BT::NodeStatus WaitForPoseCondition::tick()
   if (!started_waiting_) {
     started_waiting_ = true;
     first_wait_time_ms_ = now;
-    return BT::NodeStatus::FAILURE;
+    return BT::NodeStatus::RUNNING;
   }
 
   if (now - first_wait_time_ms_ >= timeout_value) {
+    started_waiting_ = false;
+    first_wait_time_ms_ = 0;
     return BT::NodeStatus::FAILURE;
   }
 
-  return BT::NodeStatus::FAILURE;
+  return BT::NodeStatus::RUNNING;
 }
 
 }  // namespace dog_behavior::bt_nodes

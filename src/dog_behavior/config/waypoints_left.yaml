@@ -4,12 +4,12 @@ waypoints:
     x: 0.0
     y: 0.3
     z: 0.0
-    yaw: 1.57
+    yaw: 0
   - name: "waypoint_goal_2"
     x: 0.85
     y: 0.3
     z: 0.0
-    yaw: 0.0
+    yaw: 90
   - name: "waypoint_goal_3"
     x: 0.85
     y: 2.05

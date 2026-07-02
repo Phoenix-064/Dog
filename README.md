@@ -49,7 +49,8 @@ ros2 launch dog_behavior launch.py
 - 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
 - 默认不启动目标点导航串口节点；实机导航闭环运行时使用 `use_nav_telemetry_serial:=true`。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
-- 导航/串口/PointLIO 联调可使用 `test_mode:=true`，该模式不启动感知节点，不等待抓取/放置串口回包，导航串口仍真实等待 `RCArrivalMX`。
+- 导航/串口/PointLIO 联调可使用 `test_mode:=true`，该模式加载 `behavior_tree_nav_serial_test.xml`，不启动感知节点，不等待抓取/放置串口回包，导航串口仍真实发送 `RCNAV` 并等待 `RCArrivalMX`。
+- 已完成 CH340 目标点导航串口实机收发验证：行为树测试程序可通过 `/behavior/nav_execute` 发送实际航点 `RCNAV` 帧，下位机测试程序可回传串口数据；测试固件若未返回 `RCArrivalMX`，上位机会按超时结束当前导航 goal。
 
 ### 3.3 分终端启动（用于调试）
 
@@ -106,7 +107,11 @@ ros2 launch dog_behavior launch.py use_livox:=false use_point_lio:=false
 ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/ttyUSB0 use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
 
 # 导航/目标点串口/PointLIO 联调（MID360 与 point_lio 正常启动，抓取/放置自动成功，不启动 YOLO；test_mode 会自动开启 dog_behavior_bt debug 定位日志）
-ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
+export ROS_LOG_DIR=/tmp/ros_logs
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+
+# 仅验证目标点导航串口与行为树测试程序（不启动 Livox/PointLIO，由测试输入提供位姿时使用）
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=false use_point_lio:=false use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
 
 # 指定比赛类型（左侧/右侧）
 ros2 launch dog_behavior launch.py match_type:=right
@@ -127,6 +132,35 @@ ros2 action list | grep -E "/behavior/execute|/behavior/place_boxes|/behavior/na
 # 目标、定位、系统模式就绪后触发行为树
 ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
 ~~~
+
+test mode 联调推荐按以下顺序执行：
+
+~~~bash
+# 终端 1：启动 test mode
+source /opt/ros/humble/setup.bash
+cd /home/ncu/wyr/Dog
+source install/setup.bash
+export ROS_LOG_DIR=/tmp/ros_logs
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+
+# 终端 2：触发行为树
+source /opt/ros/humble/setup.bash
+cd /home/ncu/wyr/Dog
+source install/setup.bash
+ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
+
+# 可选：观察导航执行状态
+ros2 topic echo /behavior/nav_exec_state std_msgs/msg/String --qos-reliability reliable --qos-durability volatile
+~~~
+
+触发成功后，`/behavior/nav_exec_state` 通常会先出现 `forwarding_goal`，随后进入 `running`；如果下位机返回 `RCArrivalMX`，行为树会继续推进到下一个航点。
+
+目标点导航串口联调时，日志中出现以下信息即可判定上位机到下位机链路已经打通：
+
+- `nav_telemetry_serial_ready port=/dev/ttyUSB...`：串口设备已打开。
+- `Received behavior trigger: behavior_name=start`：行为树测试程序已被触发。
+- `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米。
+- `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时出现 `nav_serial_line_unmatched` 或最终 `arrival_timeout` 不代表串口通讯失败。
 
 ## 6. 项目结构与职责
 

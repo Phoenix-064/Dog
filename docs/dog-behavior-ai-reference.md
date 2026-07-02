@@ -1,6 +1,6 @@
 # dog_behavior AI 开发参考（当前代码基线）
 
-本文档描述的是当前代码基线（截至 2026-06-15），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
+本文档描述的是当前代码基线（截至 2026-06-17），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
 
 适用范围：`src/dog_behavior` 包。
 
@@ -150,7 +150,7 @@ flowchart TD
 条件节点：
 
 1. `CheckSystemMode`：比较 `mode` 与 `expected_mode`（归一化后匹配）。
-2. `WaitForPoseCondition`：检查 `has_pose`；当前实现为条件节点语义，不返回 RUNNING。
+2. `WaitForPoseCondition`：检查 `has_pose`；未收到 pose 时在 `timeout_ms` 内返回 RUNNING，超时后返回 FAILURE，避免触发早于定位输入时立即中止整棵树。
 
 执行节点：
 
@@ -271,16 +271,19 @@ Topic：
 2. `NavigateWaypointAction.state_topic` = `/behavior/nav_exec_state`
 3. `NavigateWaypointAction.goal_topic` = `/behavior/nav_goal`
 4. `NavigateWaypointAction.feedback_timeout_sec` = `10.0`
-5. `ExecuteBehaviorAction.action_name` = `/behavior/execute`
-6. `ExecuteBehaviorAction.feedback_timeout_sec` = `2.0`
-7. `ExecutePlaceBoxesAction.action_name` = `/behavior/place_boxes`
-8. `ExecutePlaceBoxesAction.feedback_timeout_sec` = `2.0`
-9. `ExecutePlaceBoxesAction.has_target` = `true`
-10. `WaitForPose.timeout_ms` = `5000`
-11. `PublishMathAnswerAction.answer` = `42`
-12. `PublishMathAnswerAction.topic_name` = `/math_answer`
-13. `AutoSuccessAction.label` = `auto_success`
-14. `AutoSuccessAction.result_code_text` 输出 `auto_success`
+5. `NavigateWaypointAction.server_timeout_sec` = `1.0`
+6. `ExecuteBehaviorAction.action_name` = `/behavior/execute`
+7. `ExecuteBehaviorAction.feedback_timeout_sec` = `2.0`
+8. `ExecutePlaceBoxesAction.action_name` = `/behavior/place_boxes`
+9. `ExecutePlaceBoxesAction.feedback_timeout_sec` = `2.0`
+10. `ExecutePlaceBoxesAction.has_target` = `true`
+11. `WaitForPose.timeout_ms` = `5000`
+12. `PublishMathAnswerAction.answer` = `42`
+13. `PublishMathAnswerAction.topic_name` = `/math_answer`
+14. `AutoSuccessAction.label` = `auto_success`
+15. `AutoSuccessAction.result_code_text` 输出 `auto_success`
+
+`NavigateWaypointAction` 的必填端口只有 `goal`。`action_name`、`state_topic`、`goal_topic`、`feedback_timeout_sec`、`server_timeout_sec` 均可使用默认值，便于测试树只声明目标点而不重复配置通信端口。
 
 ---
 
@@ -360,6 +363,13 @@ Topic：
 ```bash
 ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
 ```
+
+实机串口验证记录：
+
+1. 已使用 CH340 `/dev/ttyUSB0` 验证 `behavior_tree_nav_serial_test.xml` 可通过真实测试程序发送航点。
+2. 触发 `/behavior/execute_trigger` 后，日志出现 `Received behavior trigger: behavior_name=start` 与 `nav_telemetry_serial_tx ... RCNAV;...`。
+3. 左侧航点文件中 `waypoint_goal_1` 为 `x=0.0, y=0.3, yaw=1.57`，串口帧对应 `goal_x=0.000;goal_y=30.000;goal_yaw=1.570`；`goal_y` 为厘米单位。
+4. 下位机测试固件返回的 `0`、`1,0,0`、`0,-1,0` 等非协议行会被记录为 `nav_telemetry_serial_rx`，并因不是 `RCArrivalMX` 产生 `nav_serial_line_unmatched`。该现象只说明测试固件未返回正式到达帧，不表示串口发送失败。
 
 ---
 

@@ -181,13 +181,16 @@ protected:
     }
   }
 
-  rclcpp::NodeOptions makeOptions(const int ack_timeout_ms = 200) const
+  rclcpp::NodeOptions makeOptions(
+    const int ack_timeout_ms = 200,
+    const bool send_shutdown_arrival = false) const
   {
     rclcpp::NodeOptions options;
     options.append_parameter_override("serial_port", "/tmp/fake_nav");
     options.append_parameter_override("ack_timeout_ms", ack_timeout_ms);
     options.append_parameter_override("reconnect_period_ms", 50);
     options.append_parameter_override("write_newline", true);
+    options.append_parameter_override("send_shutdown_arrival_on_exit", send_shutdown_arrival);
     options.append_parameter_override("current_pose_topic", "/test/nav/current_pose");
     options.append_parameter_override("goal_pose_topic", "/test/nav/goal_pose");
     options.append_parameter_override("action_name", "/test/nav/execute");
@@ -306,8 +309,156 @@ TEST_F(NavTelemetrySerialNodeTest, NavigateGoalWritesFrameAndSucceedsOnArrival)
 
   executor.remove_node(client_node);
   executor.remove_node(nav_node);
-  (void)goal_sub;
 }
+
+TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameAfterGoal)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  const bool send_shutdown = true;
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(200, send_shutdown), fake_serial);
+  auto client_node = std::make_shared<rclcpp::Node>("shutdown_arrival_client");
+  auto client = rclcpp_action::create_client<NavigateWaypoint>(client_node, "/test/nav/execute");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+  executor.add_node(client_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return client->wait_for_action_server(std::chrono::seconds(0));
+  }));
+
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = makePose("map", 3.0, 2.0);
+
+  ActionCallState state;
+  auto goal_handle = sendGoal(executor, client, goal, state);
+  ASSERT_NE(goal_handle, nullptr);
+  ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
+  fake_serial->enqueueIncomingLine("RCArrivalMX\n");
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&state]() {
+    return state.result_ready;
+  }));
+  ASSERT_TRUE(state.wrapped_result.result);
+  EXPECT_TRUE(state.wrapped_result.result->accepted);
+
+  const size_t writes_before_shutdown = fake_serial->writes().size();
+
+  nav_node->SendShutdownArrivalFrame();
+  executor.spin_some();
+
+  const auto writes = fake_serial->writes();
+  ASSERT_EQ(writes.size(), writes_before_shutdown + 1U);
+  const auto & shutdown_frame = writes.back();
+  EXPECT_NE(shutdown_frame.find("RCNAV;seq="), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";event=shutdown_arrived;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";goal_x=300.000;goal_y=200.000;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";goal_frame=map;"), std::string::npos);
+  EXPECT_EQ(shutdown_frame.back(), '\n');
+
+  executor.remove_node(client_node);
+  executor.remove_node(nav_node);
+}
+
+TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameNoGoalCached)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  const bool send_shutdown = true;
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(200, send_shutdown), fake_serial);
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+
+  nav_node->SendShutdownArrivalFrame();
+  executor.spin_some();
+
+  EXPECT_TRUE(fake_serial->writes().empty());
+
+  executor.remove_node(nav_node);
+}
+
+TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameDisabledByDefault)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(), fake_serial);
+  auto client_node = std::make_shared<rclcpp::Node>("shutdown_disabled_client");
+  auto client = rclcpp_action::create_client<NavigateWaypoint>(client_node, "/test/nav/execute");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+  executor.add_node(client_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return client->wait_for_action_server(std::chrono::seconds(0));
+  }));
+
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = makePose("map", 3.0, 2.0);
+
+  ActionCallState state;
+  auto goal_handle = sendGoal(executor, client, goal, state);
+  ASSERT_NE(goal_handle, nullptr);
+  ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
+  fake_serial->enqueueIncomingLine("RCArrivalMX\n");
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&state]() {
+    return state.result_ready;
+  }));
+
+  const size_t writes_before = fake_serial->writes().size();
+
+  nav_node->SendShutdownArrivalFrame();
+  executor.spin_some();
+
+  EXPECT_EQ(fake_serial->writes().size(), writes_before);
+
+  executor.remove_node(client_node);
+  executor.remove_node(nav_node);
+}
+
+TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameIdempotent)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  const bool send_shutdown = true;
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(200, send_shutdown), fake_serial);
+  auto client_node = std::make_shared<rclcpp::Node>("shutdown_idempotent_client");
+  auto client = rclcpp_action::create_client<NavigateWaypoint>(client_node, "/test/nav/execute");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+  executor.add_node(client_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return client->wait_for_action_server(std::chrono::seconds(0));
+  }));
+
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = makePose("map", 3.0, 2.0);
+
+  ActionCallState state;
+  auto goal_handle = sendGoal(executor, client, goal, state);
+  ASSERT_NE(goal_handle, nullptr);
+  ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
+  fake_serial->enqueueIncomingLine("RCArrivalMX\n");
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&state]() {
+    return state.result_ready;
+  }));
+
+  const size_t writes_before_shutdown = fake_serial->writes().size();
+
+  nav_node->SendShutdownArrivalFrame();
+  nav_node->SendShutdownArrivalFrame();
+  nav_node->SendShutdownArrivalFrame();
+  executor.spin_some();
+
+  EXPECT_EQ(fake_serial->writes().size(), writes_before_shutdown + 1U);
+
+  executor.remove_node(client_node);
+  executor.remove_node(nav_node);
+}
+
 
 TEST_F(NavTelemetrySerialNodeTest, NavigateGoalAbortsOnArrivalTimeout)
 {

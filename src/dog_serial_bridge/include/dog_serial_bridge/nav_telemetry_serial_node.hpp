@@ -32,6 +32,8 @@ public:
     std::shared_ptr<SerialConnection> serial_connection = nullptr);
   ~NavTelemetrySerialNode() override;
 
+  void SendShutdownArrivalFrame();
+
 private:
   void declareParameters();
   void loadParameters();
@@ -42,7 +44,7 @@ private:
   void markSerialNotReady(const std::string & detail);
   void currentPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
   bool maybeReconnect();
-  std::string buildFrame(const rclcpp::Time & stamp, const PoseCache & current, const PoseCache & goal);
+  std::string buildFrame(const rclcpp::Time & stamp, const PoseCache & current, const PoseCache & goal, const std::string & event = "");
   std::string appendConfiguredNewline(const std::string & frame) const;
   bool isValidGoal(const geometry_msgs::msg::PoseStamped & goal) const;
   void publishGoal(const geometry_msgs::msg::PoseStamped & goal);
@@ -68,10 +70,13 @@ private:
 
   mutable std::mutex pose_mutex_;
   PoseCache current_pose_;
+  PoseCache last_goal_pose_;
   uint64_t sequence_;
 
   std::mutex goal_mutex_;
   bool goal_reserved_;
+  bool send_shutdown_arrival_on_exit_;
+  bool shutdown_arrival_sent_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_pub_;

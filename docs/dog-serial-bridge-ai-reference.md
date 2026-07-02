@@ -176,6 +176,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 1. `dog_serial_bridge_node` 不启动，即 `/behavior/execute` 与 `/behavior/place_boxes` 不由串口桥提供。
 2. `dog_serial_bridge_nav_telemetry_node` 仍按 `use_nav_telemetry_serial:=true` 启动，`/behavior/nav_execute` 仍发送 `RCNAV` 并等待 `RCArrivalMX`。
 3. 抓取/放置动作由 `dog_behavior` 的 `AutoSuccessAction` 在 BT 内部直接成功，不等待 MCU 抓放回包。
+4. CH340 设备通常枚举为 `/dev/ttyUSB*`，驱动为 `ch341`，用户需具备 `dialout` 组权限或临时调整设备权限。
 
 ---
 
@@ -336,6 +337,14 @@ state = waiting_arrival
 4. 目标位姿必须是有限数值且四元数范数合法，否则 Action goal 直接 `REJECT`。
 5. `RCNAV` 帧不包含 `state`、`goal_active` 或 `/behavior/nav_exec_state` 数据；行为层状态由 `dog_behavior` 的 BT 叶子发布。
 6. `test_mode:=true` 不改变目标点导航串口协议；它只绕过抓取/放置串口链路。
+7. 下位机烧录测试固件时，可能只返回数字或逗号分隔测试数据；节点会记录 `nav_telemetry_serial_rx`，但只有收到完整 `RCArrivalMX` 才会将 Action 判定为到达成功。
+
+实机验证要点：
+
+1. 日志出现 `nav_telemetry_serial_ready port=/dev/ttyUSB0 baud=115200` 表示 CH340 串口已打开。
+2. 日志出现 `nav_telemetry_serial_tx ... RCNAV;...` 表示上位机已向下位机发送目标点帧。
+3. 日志出现 `nav_telemetry_serial_rx ...` 表示已收到下位机回传，通讯层已打通。
+4. 非 `RCArrivalMX` 回包会产生 `nav_serial_line_unmatched`，随后可能因 `ack_timeout_ms` 到达而返回 `arrival_timeout`；在测试固件场景下这是协议层预期结果，不等同于 USB/串口通讯失败。
 
 ---
 
@@ -539,6 +548,7 @@ colcon test-result --all --verbose
 5. 覆盖放置成功、超时、busy reject、非法 payload reject、无关回包忽略。
 6. 覆盖 Action feedback 心跳与 lifecycle grasp feedback 发布。
 7. 覆盖目标点导航帧包含 current/goal pose、收到 `RCArrivalMX` 成功、超时失败、串口未就绪失败。
+8. 已完成 CH340 `/dev/ttyUSB0` 实机收发验证：行为树测试程序发送 `RCNAV`，下位机测试固件有串口回传；正式到达成功仍依赖 MCU 返回 `RCArrivalMX`。
 
 CMake 测试注意事项：
 
@@ -564,8 +574,8 @@ CMake 测试注意事项：
 
 ## 10. 已知边界与剩余风险
 
-1. 当前仅在 ROS 2 Humble 下完成构建与 fake 串口测试。
-2. 尚未接真实 MCU 串口设备做端到端硬件联调。
+1. 当前在 ROS 2 Humble 下完成构建、fake 串口测试，并完成 CH340 `/dev/ttyUSB0` 目标点导航串口实机收发验证。
+2. 下位机测试固件已验证通讯链路；完整导航 Action 成功语义仍要求正式固件按协议返回 `RCArrivalMX`。
 3. 当前单串口单事务模型会拒绝并发 goal；如果未来需要队列化，需要重新设计事务队列与取消语义。
 4. 当前 `SystemSerialConnection` 支持的波特率有限；新增波特率需要扩展 `toBaudRate()`。
 5. Windows 分支不提供真实串口访问，仅用于非 Linux 平台构建安全降级。
