@@ -15,9 +15,11 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>dog_interfaces</depend>
   <depend>yaml-cpp</depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

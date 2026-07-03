@@ -19,11 +19,12 @@
 
 ```mermaid
 flowchart TD
-  A[/behavior/execute_trigger/] --> B[BehaviorTreeNode::executeTriggerCallback]
-  B --> C[tree_active=true]
+  AA[auto_start=true] --> C[tree_active=true]
+  A[/behavior/execute_trigger/] -. "手动重触发" .-> B[BehaviorTreeNode::executeTriggerCallback]
+  B --> C
   C --> D[Timer Tick -> tree.tickRoot()]
 
-  E[/localization/dog/] --> F[BehaviorTreeNode::odomCallback]
+  E[/aft_mapped_to_init/] --> F[BehaviorTreeNode::odomCallback]
   F --> G[/dog/global_pose/]
   F --> H[Blackboard.current_pose]
 
@@ -38,7 +39,8 @@ flowchart TD
   Q --> Z[/behavior/nav_goal Topic]
   T[SetBoxesTypeAction] --> U[/target/target_3d Topic]
   V[ExecutePlaceBoxesAction] --> W[/behavior/place_boxes Action Client]
-  X[PublishMathAnswerAction] --> Y[/math_answer Topic]
+  W2[/target/digit_result Topic] --> X[PublishMathAnswerAction]
+  X --> Y[/math_answer Topic]
   AA[AutoSuccessAction] --> AB[test_mode auto_success]
 ```
 
@@ -133,7 +135,7 @@ flowchart TD
 
 1. 从 `behavior_tree.xml` 加载 BT，并注册所有内建叶子节点。
 2. 订阅里程计并发布 `/dog/global_pose`，同时维护 `current_pose` 黑板数据。
-3. 订阅 `/behavior/execute_trigger`，收到触发后将 `tree_active_` 置为 true。
+3. 订阅 `/behavior/execute_trigger`，支持手动重触发；默认 `auto_start=true` 启动后自动开始 tick，无需外部触发。
 4. 订阅 `/lifecycle/system_mode` 与 `/lifecycle/recovery_context`，将结果写入黑板。
 5. 通过 `bt_tick_period_ms` 定时 `tickRoot()`，并在树终态（SUCCESS/FAILURE）后停止 tick。
 6. 初始化并维护放置链路所需黑板键（counter、箱体计数、航点 goal 等）。
@@ -141,7 +143,7 @@ flowchart TD
 
 关键约束：
 
-1. 只有 `tree_active_ == true` 才执行 tick。
+1. 只有 `tree_active_ == true` 才执行 tick；`auto_start=true`（默认）意味着启动后自动进入激活状态。
 2. odom 转发前必须通过 `isFinitePose` 与 `hasValidQuaternionNorm` 校验。
 3. 系统模式从 `mode=...` 协议字段提取并归一化。
 
@@ -161,7 +163,7 @@ flowchart TD
 5. `PlaceRuleAction`：根据 `match_type + counter` 生成 `target_type` 与 `group_indices`。
 6. `PlaceIndexAction`：生成 `local_indices`、`payload`、`count_after_success`、`has_target`。
 7. `ExecutePlaceBoxesAction`：调用 `/behavior/place_boxes`（`dog_interfaces/action/PlaceBoxes`），成功且 accepted 时提交对应类型计数。
-8. `PublishMathAnswerAction`：在指定航点匹配时向 `/math_answer` 发布答案。
+8. `PublishMathAnswerAction`：订阅 `/target/digit_result`，在指定航点匹配时向 `/math_answer` 发布答案。
 9. `AutoSuccessAction`：测试模式专用同步叶子，记录 `test_mode_auto_success` 日志并直接返回 SUCCESS。
 10. `SelectWaypointAction`：可用航点选择节点（已注册，当前主树未启用）。
 
@@ -194,8 +196,8 @@ flowchart TD
 
 订阅：
 
-1. `/localization/dog`（可配）`nav_msgs/msg/Odometry`
-2. `/behavior/execute_trigger`（可配）`std_msgs/msg/String`
+1. `/aft_mapped_to_init`（可配）`nav_msgs/msg/Odometry`
+2. `/behavior/execute_trigger`（可配，`auto_start=true` 时可选）`std_msgs/msg/String`
 3. `/lifecycle/recovery_context`（可配）`std_msgs/msg/String`
 4. `/lifecycle/system_mode`（可配）`std_msgs/msg/String`
 
@@ -216,7 +218,7 @@ Topic：
 1. `NavigateWaypointAction` 发布 `/behavior/nav_exec_state`（`std_msgs/msg/String`）
 2. `NavigateWaypointAction` 发布 `/behavior/nav_goal`（`geometry_msgs/msg/PoseStamped`），供观测与串口导航节点兼容链路使用。
 3. `SetBoxesTypeAction` 订阅 `/target/target_3d`（`dog_interfaces/msg/Target3DArray`）
-4. `PublishMathAnswerAction` 发布 `/math_answer`（`std_msgs/msg/String`）
+4. `PublishMathAnswerAction` 订阅 `/target/digit_result`（`dog_interfaces/msg/Target3DArray`），并发布 `/math_answer`（`std_msgs/msg/String`）
 
 说明：
 
@@ -255,7 +257,7 @@ Topic：
 ### 6.1 BehaviorTreeNode 参数默认值
 
 1. `global_pose_topic` = `/dog/global_pose`
-2. `localization_topic` = `/localization/dog`
+2. `localization_topic` = `/aft_mapped_to_init`
 3. `default_frame_id` = `base_link`
 4. `execute_behavior_trigger_topic` = `/behavior/execute_trigger`
 5. `recovery_context_topic` = `/lifecycle/recovery_context`
@@ -263,7 +265,8 @@ Topic：
 7. `match_type` = `left`（仅允许 `left|right`，非法值回退 `left`）
 8. `tree_xml_file_path` = `<share>/config/behavior_tree.xml`
 9. `bt_tick_period_ms` = `100`
-10. `waypoints_file` = `""`
+10. `auto_start` = `true` — 启动后是否自动开始 tick，设为 false 则需手动发 `/behavior/execute_trigger`
+11. `waypoints_file` = `""`
 
 ### 6.2 关键 BT 端口默认值
 
@@ -367,7 +370,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 实机串口验证记录：
 
 1. 已使用 CH340 `/dev/ttyUSB0` 验证 `behavior_tree_nav_serial_test.xml` 可通过真实测试程序发送航点。
-2. 触发 `/behavior/execute_trigger` 后，日志出现 `Received behavior trigger: behavior_name=start` 与 `nav_telemetry_serial_tx ... RCNAV;...`。
+2. 启动后行为树自动开始执行（`auto_start=true`），日志出现 `BT tick completed` 与 `nav_telemetry_serial_tx ... RCNAV;...`。
 3. 左侧航点文件中 `waypoint_goal_1` 为 `x=0.0, y=0.3, yaw=1.57`，串口帧对应 `goal_x=0.000;goal_y=30.000;goal_yaw=1.570`；`goal_y` 为厘米单位。
 4. 下位机测试固件返回的 `0`、`1,0,0`、`0,-1,0` 等非协议行会被记录为 `nav_telemetry_serial_rx`，并因不是 `RCArrivalMX` 产生 `nav_serial_line_unmatched`。该现象只说明测试固件未返回正式到达帧，不表示串口发送失败。
 
@@ -416,12 +419,6 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 ---
 
-## 12. 与重构计划的衔接
+## 12. 历史重构结论
 
-相关计划文档：[docs/behavior_tree_refactor_plan.md](behavior_tree_refactor_plan.md)
-
-当前结论：
-
-1. Phase 0/1/2/3 的核心代码路径已落地到当前基线。
-2. `src/dog_behavior` 运行主线已统一为 `BehaviorTreeNode + BT 叶子`。
-3. 当前阶段回归策略继续以包内单元测试为主。
+旧 `BehaviorNode` / `NavigationExecutorNode` 双节点路径已退场。当前运行主线统一为 `BehaviorTreeNode + BT 叶子`，目标点导航通过 `NavigateWaypointAction` 调用 `/behavior/nav_execute`，不再维护 Nav2 `/navigate_to_pose` 路径。

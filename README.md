@@ -77,6 +77,7 @@ ros2 run dog_behavior dog_behavior_bt_node
 - livox_model（默认 mid360，可选 mid360/hap）：选择 Livox 配置
 - use_point_lio（默认 true）：是否启动 point_lio
 - use_point_lio_rviz（默认 false）：是否让 point_lio 同时启动 RViz
+- use_test_visualization（默认 false）：是否在 `test_mode=true` 时启动项目自带 RViz2 测试可视化；显示 Livox/PointLIO 点云、定位轨迹、测试路线、当前导航目标和导航状态
 - use_perception_camera（默认 false）：是否启动 dog_perception_camera_node
 - use_serial_bridge（默认 false）：是否启动 dog_serial_bridge_node，提供抓取/放置 Action Server
 - serial_port（默认 /dev/ttyUSB0）：下位机行为执行串口
@@ -96,6 +97,10 @@ ros2 launch dog_behavior launch.py livox_model:=hap
 
 # 启用 point_lio 自带 RViz
 ros2 launch dog_behavior launch.py use_point_lio_rviz:=true
+
+# 启用项目 test mode RViz2 可视化（推荐用于雷达/定位/导航联调）
+export ROS_LOG_DIR=/tmp/ros_logs
+ros2 launch dog_behavior launch.py test_mode:=true use_test_visualization:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
 
 # 同时启动相机节点
 ros2 launch dog_behavior launch.py use_perception_camera:=true
@@ -126,10 +131,13 @@ ros2 pkg list | grep -E "dog_perception|dog_lifecycle|dog_behavior|dog_interface
 # 核对关键 topic 是否存在
 ros2 topic list | grep -E "/target/target_3d|/lifecycle/system_mode|/dog/global_pose"
 
+# 启用 use_test_visualization 后核对 RViz2 可视化 topic
+ros2 topic list | grep -E "/behavior/test_visualization/route|/behavior/test_visualization/markers|/behavior/nav_goal|/behavior/nav_exec_state"
+
 # 实机闭环时核对抓取/放置/目标点导航 Action Server
 ros2 action list | grep -E "/behavior/execute|/behavior/place_boxes|/behavior/nav_execute"
 
-# 目标、定位、系统模式就绪后触发行为树
+# 行为树启动后自动执行，无需手动触发。如需强制重触发：
 ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
 ~~~
 
@@ -143,22 +151,33 @@ source install/setup.bash
 export ROS_LOG_DIR=/tmp/ros_logs
 ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
 
-# 终端 2：触发行为树
-source /opt/ros/humble/setup.bash
-cd /home/ncu/wyr/Dog
-source install/setup.bash
-ros2 topic pub --once /behavior/execute_trigger std_msgs/msg/String "{data: start}"
-
 # 可选：观察导航执行状态
 ros2 topic echo /behavior/nav_exec_state std_msgs/msg/String --qos-reliability reliable --qos-durability volatile
+
+# 可选：确认 RViz2 测试可视化输出
+ros2 topic echo --once /behavior/test_visualization/route
+ros2 topic echo --once /behavior/test_visualization/markers
 ~~~
 
-触发成功后，`/behavior/nav_exec_state` 通常会先出现 `forwarding_goal`，随后进入 `running`；如果下位机返回 `RCArrivalMX`，行为树会继续推进到下一个航点。
+行为树启动后自动开始执行（`auto_start=true`，默认）。`/behavior/nav_exec_state` 通常会先出现 `forwarding_goal`，随后进入 `running`；如果下位机返回 `RCArrivalMX`，行为树会继续推进到下一个航点。
+
+`use_test_visualization:=true` 仅在 `test_mode:=true` 下生效，会额外启动 `dog_test_visualization_node` 与 RViz2，加载 `config/test_mode_navigation.rviz`。其中：
+
+- 雷达/建图：显示 `/livox/lidar`、`/cloud_registered`、`/Laser_map`
+- 定位：显示 `/aft_mapped_to_init`、`/path`、`/dog/global_pose`
+- 导航：显示 `/behavior/nav_goal`、`/behavior/test_visualization/route`、`/behavior/test_visualization/markers`
+- 若环境不能写默认 ROS 日志目录，先设置 `export ROS_LOG_DIR=/tmp/ros_logs`
+
+如需手动控制触发时机，可通过参数关闭自动启动：
+
+~~~bash
+ros2 launch dog_behavior launch.py test_mode:=true auto_start:=false
+~~~
 
 目标点导航串口联调时，日志中出现以下信息即可判定上位机到下位机链路已经打通：
 
 - `nav_telemetry_serial_ready port=/dev/ttyUSB...`：串口设备已打开。
-- `Received behavior trigger: behavior_name=start`：行为树测试程序已被触发。
+- `behavior_name=auto_start`：行为树已自动启动。
 - `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米。
 - `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时出现 `nav_serial_line_unmatched` 或最终 `arrival_timeout` 不代表串口通讯失败。
 
@@ -194,9 +213,11 @@ flowchart LR
   H --> I["/dog/global_pose"]
   H --> J["/behavior/nav_execute"]
   H --> K["/behavior/nav_exec_state"]
+  H --> O["/behavior/test_visualization/*"]
   H --> L["/behavior/execute"]
   H --> M["/behavior/place_boxes"]
   J --> N[dog_serial_bridge]
+  O --> P[RViz2]
   L --> N
   M --> N
 ~~~
@@ -246,18 +267,13 @@ colcon test-result --all --verbose
 ## 10. 相关文档
 
 - docs/index.md
-- docs/project-overview.md
-- docs/architecture.md
-- docs/integration-architecture.md
-- docs/interface-architecture.md
-- docs/development-instructions.md
+- docs/dog-perception-ai-reference.md
+- docs/dog-lifecycle-ai-reference.md
+- docs/dog-behavior-ai-reference.md
+- docs/dog-serial-bridge-ai-reference.md
+- docs/navigation-replacement-proposal.md
 
-## 11. BMAD 产物目录
-
-- _bmad-output/planning-artifacts/
-- _bmad-output/implementation-artifacts/
-
-## 12. 维护说明
+## 11. 维护说明
 
 - build、install、log 为生成目录，不应手工编辑。
 - 3rd_party 下组件请参考各自项目文档进行独立配置。

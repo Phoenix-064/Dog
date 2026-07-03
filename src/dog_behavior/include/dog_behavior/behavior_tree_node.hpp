@@ -57,6 +57,7 @@ private:
 
   mutable std::mutex state_mutex_;
   bool has_latest_pose_;
+  bool auto_start_;
   bool tree_active_;
   bool ros_node_seeded_;
   int tick_count_;

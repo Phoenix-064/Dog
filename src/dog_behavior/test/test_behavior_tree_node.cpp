@@ -88,6 +88,7 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickSucceedsAfterReceivingPose)
   options.append_parameter_override("system_mode_topic", system_mode_topic);
   options.append_parameter_override("tree_xml_file_path", std::string(DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH));
   options.append_parameter_override("bt_tick_period_ms", 50);
+  options.append_parameter_override("auto_start", false);
 
   auto bt_node = std::make_shared<dog_behavior::BehaviorTreeNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("bt_node_test_io_success");
@@ -160,6 +161,7 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
   options.append_parameter_override("system_mode_topic", system_mode_topic);
   options.append_parameter_override("tree_xml_file_path", std::string(DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH));
   options.append_parameter_override("bt_tick_period_ms", 50);
+  options.append_parameter_override("auto_start", false);
 
   auto bt_node = std::make_shared<dog_behavior::BehaviorTreeNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("bt_node_test_io_failure");

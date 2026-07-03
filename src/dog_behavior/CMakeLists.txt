@@ -20,6 +20,7 @@ find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -38,6 +39,7 @@ add_library(${PROJECT_NAME}_lib
   src/bt_nodes/execute_behavior_action.cpp
   src/bt_nodes/navigate_to_pose_action.cpp
   src/common/payload_utils.cpp
+  src/test_visualization_node.cpp
 )
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -51,6 +53,7 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   nav_msgs
   geometry_msgs
   std_msgs
+  visualization_msgs
   dog_interfaces
 )
 target_link_libraries(${PROJECT_NAME}_lib yaml-cpp)
@@ -58,9 +61,13 @@ target_link_libraries(${PROJECT_NAME}_lib yaml-cpp)
 add_executable(${PROJECT_NAME}_bt_node src/behavior_tree_main.cpp)
 target_link_libraries(${PROJECT_NAME}_bt_node ${PROJECT_NAME}_lib)
 
+add_executable(dog_test_visualization_node src/test_visualization_main.cpp)
+target_link_libraries(dog_test_visualization_node ${PROJECT_NAME}_lib)
+
 install(TARGETS
   ${PROJECT_NAME}_lib
   ${PROJECT_NAME}_bt_node
+  dog_test_visualization_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -170,6 +177,20 @@ if(BUILD_TESTING)
       std_msgs
     )
     set_tests_properties(test_navigate_waypoint_action
+      PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
+  endif()
+
+  ament_add_gtest(test_test_visualization_node test/test_visualization_node.cpp)
+  if(TARGET test_test_visualization_node)
+    target_link_libraries(test_test_visualization_node ${PROJECT_NAME}_lib)
+    ament_target_dependencies(test_test_visualization_node
+      rclcpp
+      nav_msgs
+      geometry_msgs
+      std_msgs
+      visualization_msgs
+    )
+    set_tests_properties(test_test_visualization_node
       PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
   endif()
 

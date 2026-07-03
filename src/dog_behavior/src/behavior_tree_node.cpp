@@ -97,6 +97,9 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 , system_mode_("normal")
 , last_tick_status_("idle")
 {
+  auto_start_ = declare_parameter<bool>("auto_start", true);
+  tree_active_ = auto_start_;
+
   const auto global_pose_topic = declare_parameter<std::string>("global_pose_topic", "/dog/global_pose");
   const auto localization_topic = declare_parameter<std::string>("localization_topic", "/aft_mapped_to_init");
   goal_frame_id_ = declare_parameter<std::string>("goal_frame_id", "map");
@@ -166,7 +169,7 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
   blackboard_->set("system_mode", system_mode_);
   blackboard_->set("match_type", match_type_);
   blackboard_->set("recovery_context", std::string(""));
-  blackboard_->set("behavior_name", std::string(""));
+  blackboard_->set("behavior_name", std::string("auto_start"));
   blackboard_->set("has_current_pose", false);
   blackboard_->set("counter", -1);
   blackboard_->set("food_box_count", 0);

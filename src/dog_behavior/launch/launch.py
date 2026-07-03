@@ -77,6 +77,42 @@ def _create_behavior_node(context, *args, **kwargs):
     ]
 
 
+def _create_test_visualization_actions(context, *args, **kwargs):
+    del args
+    del kwargs
+
+    test_mode = LaunchConfiguration("test_mode").perform(context).lower() == "true"
+    use_test_visualization = LaunchConfiguration("use_test_visualization").perform(context).lower() == "true"
+    if not test_mode or not use_test_visualization:
+        return []
+
+    match_type = LaunchConfiguration("match_type").perform(context)
+    goal_frame_id = LaunchConfiguration("goal_frame_id").perform(context)
+    pkg_share = get_package_share_directory("dog_behavior")
+    waypoints_file = os.path.join(pkg_share, "config", f"waypoints_{match_type}.yaml")
+    rviz_config_file = os.path.join(pkg_share, "config", "test_mode_navigation.rviz")
+
+    return [
+        Node(
+            package="dog_behavior",
+            executable="dog_test_visualization_node",
+            name="dog_test_visualization",
+            output="screen",
+            parameters=[{
+                "frame_id": goal_frame_id,
+                "waypoints_file": waypoints_file,
+            }],
+        ),
+        Node(
+            package="rviz2",
+            executable="rviz2",
+            name="dog_test_rviz2",
+            output="screen",
+            arguments=["-d", rviz_config_file],
+        ),
+    ]
+
+
 def generate_launch_description() -> LaunchDescription:
     # Bring up all first-party and third-party runtime components from one entrypoint.
     test_mode = LaunchConfiguration("test_mode")
@@ -126,6 +162,12 @@ def generate_launch_description() -> LaunchDescription:
         "use_point_lio_rviz",
         default_value="false",
         description="Whether point_lio should start RViz.",
+    )
+
+    declare_use_test_visualization = DeclareLaunchArgument(
+        "use_test_visualization",
+        default_value="false",
+        description="Whether to start dog test-mode RViz2 visualization.",
     )
 
     declare_use_perception_camera = DeclareLaunchArgument(
@@ -232,6 +274,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     third_party_actions = OpaqueFunction(function=_create_optional_third_party_actions)
+    test_visualization_actions = OpaqueFunction(function=_create_test_visualization_actions)
 
     perception_node = Node(
         package="dog_perception",
@@ -330,6 +373,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_livox_model,
         declare_use_point_lio,
         declare_use_point_lio_rviz,
+        declare_use_test_visualization,
         declare_use_perception_camera,
         declare_goal_frame_id,
         declare_use_serial_bridge,
@@ -355,4 +399,5 @@ def generate_launch_description() -> LaunchDescription:
         nav_telemetry_serial_node,
         static_map_camera_tf,
         behavior_node,
+        test_visualization_actions,
     ])
