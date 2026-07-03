@@ -2,7 +2,7 @@
 
 ## Context
 - This repository is a ROS 2 Humble (Ubuntu 22.04) workspace built with `ament_cmake` and `colcon`.
-- Main first-party packages are under `src/`: `dog_interfaces`, `dog_perception`, `dog_lifecycle`, `dog_behavior`.
+- Main first-party packages are under `src/`: `dog_interfaces`, `dog_perception`, `dog_lifecycle`, `dog_behavior`, `dog_serial_bridge`.
 - `build/`, `install/`, and `log/` are generated artifacts; do not hand-edit files there.
 
 ## Architecture
@@ -11,6 +11,7 @@
 - `dog_perception`: sensor processing and target outputs.
 - `dog_lifecycle`: health/state/degrade logic and system mode.
 - `dog_behavior`: behavior execution and action client orchestration.
+- `dog_serial_bridge`: serial action servers for pickup/place and waypoint navigation.
 - Prefer changes that preserve pub/sub and action-based decoupling between packages.
 
 ## Build And Test
@@ -54,7 +55,7 @@
 - Keep this file minimal and executable. Link to docs instead of duplicating long explanations.
 - `README.md` for quick start and system data flow.
 - `docs/index.md` for documentation map.
-- `docs/development-instructions.md` for development/deployment basics.
-- `docs/architecture.md` and `docs/integration-architecture.md` for system-level design.
-- `docs/interface-architecture.md` for interface contracts.
-- `docs/behavior-nav2-action-mapping-spec.md` for behavior/navigation action mapping details.
+- `docs/dog-perception-ai-reference.md` for perception interfaces and call structure.
+- `docs/dog-lifecycle-ai-reference.md` for lifecycle interfaces and state handling.
+- `docs/dog-behavior-ai-reference.md` for behavior tree interfaces and call structure.
+- `docs/dog-serial-bridge-ai-reference.md` for MCU serial protocol and action mapping.

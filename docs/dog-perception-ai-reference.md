@@ -45,7 +45,7 @@
 
 PerceptionNode 运行时主线：
 
-1. 同步图像与点云，驱动 3D 目标求解并发布 Target3DArray。
+1. 同步图像与点云，驱动目标求解并发布 Target3DArray。
 2. 同时执行数字识别并发布独立数字结果流。
 3. 在单边掉流或时间戳偏斜时做外推发布。
 4. 在 lifecycle 模式切换到 idle_spinning 或 degraded 时发布占位姿态。
@@ -170,11 +170,12 @@ MinimalPnpSolver 关键处理：
 1. heuristic：[src/dog_perception/src/detectors/heuristic_digit_recognizer.cpp#L13](../src/dog_perception/src/detectors/heuristic_digit_recognizer.cpp#L13)
 2. mean_intensity：[src/dog_perception/src/detectors/mean_intensity_digit_recognizer.cpp#L12](../src/dog_perception/src/detectors/mean_intensity_digit_recognizer.cpp#L12)
 3. opencv_dnn_yolo：[src/dog_perception/src/detectors/opencv_dnn_yolo_digit_recognizer.cpp#L25](../src/dog_perception/src/detectors/opencv_dnn_yolo_digit_recognizer.cpp#L25)
+4. math_ocr：[src/dog_perception/src/detectors/math_ocr_digit_recognizer.cpp](../src/dog_perception/src/detectors/math_ocr_digit_recognizer.cpp)
 
 回退策略：
 
-1. 请求类型为空，默认 heuristic。
-2. 请求类型未知，回退 heuristic 并告警。
+1. 请求类型为空，默认 `math_ocr`。
+2. 请求类型未知，回退 `heuristic` 并告警。
 3. creator 返回空指针时抛异常。
 
 ### 3.6 箱体检测链
@@ -191,7 +192,7 @@ MinimalPnpSolver 关键处理：
 
 1. 无检测或模型不可用时，返回单元素 target_id=no_box。
 2. 有检测时，target_id 为行为层可识别箱体类型（food/tool/instrument/medical）。
-3. position 语义：x/y 为归一化中心点，z 为归一化面积。
+3. 箱体输出的 `position` 语义：x/y 为归一化图像框中心点，z 为归一化面积比例，不是真实世界 3D 坐标。
 
 ### 3.7 相机发布链
 
@@ -262,7 +263,7 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 5. lifecycle_mode_topic=/lifecycle/system_mode
 6. qos_reliability=best_effort
 7. solver_type=minimal_pnp
-8. digit_recognizer_type=heuristic
+8. digit_recognizer_type=math_ocr
 
 同步与时序参数：
 
@@ -398,7 +399,7 @@ P95 相关实现位置：
 1. dog_perception synchronizedCallback call chain with digit and pnp solver
 2. perception watchdog single_side_dropout timestamp_skew extrapolation
 3. lifecycle mode idle_spinning degraded interaction in perception
-4. digit recognizer factory fallback heuristic registration behavior
+4. digit recognizer factory default math_ocr and fallback heuristic behavior
 5. box detector no_box fallback and normalized position semantics
 6. qos reliability mismatch runtime check in dog_perception
 
