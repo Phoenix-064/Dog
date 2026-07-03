@@ -504,17 +504,6 @@ void NavTelemetrySerialNode::SendShutdownArrivalFrame()
   }
   shutdown_arrival_sent_ = true;
 
-  PoseCache goal;
-  {
-    std::lock_guard<std::mutex> lock(pose_mutex_);
-    goal = last_goal_pose_;
-  }
-
-  if (!goal.valid) {
-    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip no_goal_cached");
-    return;
-  }
-
   std::shared_ptr<SerialConnection> serial;
   {
     std::lock_guard<std::mutex> lock(serial_mutex_);
@@ -531,7 +520,12 @@ void NavTelemetrySerialNode::SendShutdownArrivalFrame()
     current = current_pose_;
   }
 
-  const auto frame = appendConfiguredNewline(buildFrame(now(), current, goal, "shutdown_arrived"));
+  if (!current.valid) {
+    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip no_current_pose");
+    return;
+  }
+
+  const auto frame = appendConfiguredNewline(buildFrame(now(), current, current, "shutdown_arrived"));
   std::string error;
   RCLCPP_INFO(
     get_logger(),

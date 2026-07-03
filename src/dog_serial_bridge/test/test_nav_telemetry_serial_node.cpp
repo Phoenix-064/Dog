@@ -342,6 +342,17 @@ TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameAfterGoal)
   ASSERT_TRUE(state.wrapped_result.result);
   EXPECT_TRUE(state.wrapped_result.result->accepted);
 
+  auto current_pub = client_node->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/test/nav/current_pose",
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  geometry_msgs::msg::PoseStamped current_pose = makePose("camera_init", -0.26969, -0.08705);
+  current_pub->publish(current_pose);
+  for (int i = 0; i < 50; ++i) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
   const size_t writes_before_shutdown = fake_serial->writes().size();
 
   nav_node->SendShutdownArrivalFrame();
@@ -352,15 +363,15 @@ TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameAfterGoal)
   const auto & shutdown_frame = writes.back();
   EXPECT_NE(shutdown_frame.find("RCNAV;seq="), std::string::npos);
   EXPECT_NE(shutdown_frame.find(";event=shutdown_arrived;"), std::string::npos);
-  EXPECT_NE(shutdown_frame.find(";goal_x=300.000;goal_y=200.000;"), std::string::npos);
-  EXPECT_NE(shutdown_frame.find(";goal_frame=map;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";goal_x=-26.969;goal_y=-8.705;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";goal_frame=camera_init;"), std::string::npos);
   EXPECT_EQ(shutdown_frame.back(), '\n');
 
   executor.remove_node(client_node);
   executor.remove_node(nav_node);
 }
 
-TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameNoGoalCached)
+TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameNoCurrentPose)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   const bool send_shutdown = true;
@@ -447,6 +458,17 @@ TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameIdempotent)
   }));
 
   const size_t writes_before_shutdown = fake_serial->writes().size();
+
+  auto current_pub = client_node->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/test/nav/current_pose",
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  geometry_msgs::msg::PoseStamped current_pose = makePose("camera_init", -0.26969, -0.08705);
+  current_pub->publish(current_pose);
+  for (int i = 0; i < 50; ++i) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
 
   nav_node->SendShutdownArrivalFrame();
   nav_node->SendShutdownArrivalFrame();
