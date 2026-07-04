@@ -51,6 +51,11 @@ PerceptionNode 运行时主线：
 4. 在 lifecycle 模式切换到 idle_spinning 或 degraded 时发布占位姿态。
 5. 维护 QoS 兼容性、时延统计与缓存指标（P95、丢帧、恢复计数）。
 
+启动约束补充：
+
+1. `ros2 launch dog_behavior launch.py test_mode:=true` 时不启动 `dog_perception_node` 和 `dog_perception_camera_node`。
+2. `box_recognition.yaml`、`digit_recognition.yaml`、`camera_extrinsics.yaml` 会安装到 share，但当前统一 launch 没有作为 params-file 加载。
+
 CameraPublisherNode 运行时主线：
 
 1. 从相机采集帧并转换为 ROS Image。
@@ -193,6 +198,7 @@ MinimalPnpSolver 关键处理：
 1. 无检测或模型不可用时，返回单元素 target_id=no_box。
 2. 有检测时，target_id 为行为层可识别箱体类型（food/tool/instrument/medical）。
 3. 箱体输出的 `position` 语义：x/y 为归一化图像框中心点，z 为归一化面积比例，不是真实世界 3D 坐标。
+4. `/target/target_3d` 存在双重语义：箱体检测输出是图像框归一化坐标；solver/extrapolation 输出才接近 3D 位姿语义。
 
 ### 3.7 相机发布链
 
@@ -327,6 +333,7 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 1. 同步订阅 QoS 基于参数 qos_reliability 动态映射为 best_effort 或 reliable。
 2. setupSynchronizedPipeline 内会检查 image_topic 与 pointcloud_topic 的发布端 QoS 可靠性。
 3. 若发现不兼容，synchronized callback 会持续丢帧并输出节流错误日志。
+4. `target3d_topic` 与 `digit_result_topic` 使用 `SensorDataQoS` 发布。`dog_lifecycle` 订阅 `/target/target_3d` 也使用 `SensorDataQoS`，但 `dog_behavior` 的 `SetBoxesTypeAction` 当前使用默认 reliable `QoS(10)`，在 ROS 2 可靠性规则下可能与 best-effort 发布端不匹配，联调时需重点检查。
 
 检查入口：[src/dog_perception/src/perception_node.cpp#L409](../src/dog_perception/src/perception_node.cpp#L409)
 

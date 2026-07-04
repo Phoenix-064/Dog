@@ -179,6 +179,8 @@ Load 回退策略：
 4. valid_frame_topic，默认 /perception/target3d，类型 dog_interfaces/msg/Target3DArray，QoS SensorData。
 5. lifecycle_transition_status_topic，默认 /lifecycle/transition_status，类型 std_msgs/String，QoS Reliable KeepLast(10)。
 
+运行态说明：统一 `dog_behavior/launch/launch.py` 会覆盖 `valid_frame_topic=/target/target_3d`；单独运行 `dog_lifecycle_node` 时仍使用包内默认 `/perception/target3d`。
+
 ### 4.2 发布接口
 
 1. degrade_command_topic，默认 /lifecycle/degrade_command，类型 std_msgs/String，QoS Reliable KeepLast(10)。
@@ -186,6 +188,8 @@ Load 回退策略：
 3. system_mode_topic，默认 /lifecycle/system_mode，类型 std_msgs/String，QoS Reliable + TransientLocal KeepLast(1)。
 4. lifecycle_transition_topic，默认 /lifecycle/transition_command，类型 std_msgs/String，QoS Reliable KeepLast(10)。
 5. health_alarm_topic，默认 /lifecycle/health_alarm，类型 std_msgs/String，QoS Reliable KeepLast(10)。
+
+当前仓库内未发现默认 `/lifecycle/transition_command` 消费者；心跳重连链路需要外部生命周期管理节点回传 `/lifecycle/transition_status`。
 
 ### 4.3 字符串负载协议（关键字段）
 
@@ -200,6 +204,14 @@ Load 回退策略：
    2. cold_start: mode=cold_start;task_phase=;target_state=;timestamp_ms=0;version=...;reason=...;load_ms=...;map_ms=...;total_ms=...
 
 说明：键值解析通过 parseKeyValuePayload，键和值会统一小写并去空白处理，分隔符为分号。
+
+有效帧心跳判定：
+
+1. `Target3DArray.header.stamp` 非零。
+2. `targets` 非空。
+3. 至少一个目标位置为有限数值。
+4. 至少一个目标 `confidence > 0`。
+5. 因此 `no_box`、`no_feature`、`idle_spinning` 等低置信或占位输出不算健康心跳。
 
 ## 5. 参数清单与默认值
 
@@ -219,6 +231,7 @@ Load 回退策略：
 1. reconnect_pending_timeout_ms 小于等于 0 时会自适应计算，并被限制在 restart_window_ms 以内，保证 attempt 能在窗口内累积触发降级。
 2. max_restart_attempts、restart_window_ms、heartbeat_timeout_ms 等无效值会回退到安全默认值。
 3. `test_mode:=true` 是 launch 层参数覆盖，不改变 `dog_lifecycle` 包内默认值；单独运行 `dog_lifecycle_node` 时仍使用包内默认心跳参数。
+4. 统一 launch 在 `test_mode:=true` 时把 `heartbeat_timeout_ms` 覆盖为 `600000`，避免未启动感知节点时过早重连或降级。
 
 样例配置文件：[src/dog_lifecycle/config/persistence.yaml](../src/dog_lifecycle/config/persistence.yaml)
 

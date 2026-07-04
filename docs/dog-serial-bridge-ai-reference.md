@@ -184,6 +184,14 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 协议常量定义：[src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp](../src/dog_serial_bridge/include/dog_serial_bridge/serial_protocol.hpp)
 
+### 4.0.1 字符串协议分层
+
+本包同时涉及三类字符串格式，不能混用：
+
+1. ROS 节点间通用 payload：多数字段使用分号分隔 `key=value;key=value`，由 `dog_behavior::utils::parseKeyValuePayload()` 解析。
+2. `PlaceBoxes.goal.payload`：当前格式为 `place=0,3,count=3`，由 `dog_serial_bridge::parsePlacePayload()` 解析，不是分号协议。
+3. `/behavior/grasp_feedback`：当前格式为 `pickup_<seq>|success` 或 `pickup_<seq>|empty_grasp`，由 lifecycle 兼容解析逻辑消费。
+
 ### 4.0 标准帧格式
 
 当前串口协议采用一行一帧的 ASCII 文本格式：
@@ -245,6 +253,8 @@ progress = 0.5
 state = waiting_pick_result
 ```
 
+注意：`RCPickFail` 的 ROS action code 仍为 `SUCCEEDED`，业务失败通过 Result 的 `accepted=false` 表达；上游 BT 叶子会把 `accepted=false` 当作失败。
+
 ### 4.2 放置命令
 
 上层请求示例：
@@ -288,6 +298,8 @@ state = waiting_place_ack
 /dog/global_pose        geometry_msgs/msg/PoseStamped   # 输入，用于 cur_* 字段
 /behavior/nav_goal      geometry_msgs/msg/PoseStamped   # 输出，发布当前目标位姿
 ```
+
+注意：`/behavior/nav_goal` 也会由 `dog_behavior::bt_nodes::NavigateWaypointAction` 在发送 action goal 前发布；`NavTelemetrySerialNode` 收到 goal 后会再次发布。`/behavior/nav_exec_state` 不由本节点发布。
 
 串口发送：
 
@@ -568,7 +580,7 @@ CMake 测试注意事项：
 5. 修改真实串口实现时，保留 `SerialConnection` 抽象，确保测试仍可用 fake 串口无硬件运行。
 6. 增加新 MCU 回包时，必须明确其只对哪类 transaction 生效，避免不同 Action 互相误消费回包。
 7. 目标点导航链路应保持独立串口和单 goal 执行模型；不要把导航回包混入 `SerialBridgeNode` 的抓取/放置事务。
-8. `/behavior/nav_goal` 是 `NavTelemetrySerialNode` 在收到 `/behavior/nav_execute` goal 后发布的观测 topic；真正执行入口是 Action，不要依赖 ROS action hidden topic。
+8. `/behavior/nav_goal` 是观测 topic，`NavigateWaypointAction` 与 `NavTelemetrySerialNode` 都会发布；真正执行入口是 `/behavior/nav_execute` Action，不要依赖 ROS action hidden topic。
 
 ---
 

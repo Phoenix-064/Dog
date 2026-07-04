@@ -48,6 +48,7 @@ ros2 launch dog_behavior launch.py
 - 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_bt_node。
 - 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
 - 默认不启动目标点导航串口节点；实机导航闭环运行时使用 `use_nav_telemetry_serial:=true`。
+- 默认 launch 不提供 `/behavior/execute`、`/behavior/place_boxes`、`/behavior/nav_execute` 的 Action Server；正式行为树需要启用对应串口节点，或由外部节点提供同名 Action Server。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
 - 导航/串口/PointLIO 联调可使用 `test_mode:=true`，该模式加载 `behavior_tree_nav_serial_test.xml`，不启动感知节点，不等待抓取/放置串口回包，导航串口仍真实发送 `RCNAV` 并等待 `RCArrivalMX`。
 - 已完成 CH340 目标点导航串口实机收发验证：行为树测试程序可通过 `/behavior/nav_execute` 发送实际航点 `RCNAV` 帧，下位机测试程序可回传串口数据；测试固件若未返回 `RCArrivalMX`，上位机会按超时结束当前导航 goal。
@@ -168,11 +169,7 @@ ros2 topic echo --once /behavior/test_visualization/markers
 - 导航：显示 `/behavior/nav_goal`、`/behavior/test_visualization/route`、`/behavior/test_visualization/markers`
 - 若环境不能写默认 ROS 日志目录，先设置 `export ROS_LOG_DIR=/tmp/ros_logs`
 
-如需手动控制触发时机，可通过参数关闭自动启动：
-
-~~~bash
-ros2 launch dog_behavior launch.py test_mode:=true auto_start:=false
-~~~
+说明：`BehaviorTreeNode` 内部支持 `auto_start` 参数，但当前统一 `launch.py` 没有声明或透传该参数；如需手动触发启动，需直接运行节点并设置参数，或先扩展 launch 参数。
 
 目标点导航串口联调时，日志中出现以下信息即可判定上位机到下位机链路已经打通：
 
@@ -193,7 +190,7 @@ Dog/
 │   └── dog_serial_bridge/# 下位机串口动作桥与导航遥测
 ├── 3rd_party/
 │   ├── livox_ros_driver2/
-│   └── point_lio/
+│   └── point_lio_ros2/   # ROS 包名为 point_lio
 ├── docs/
 ├── tools/
 └── build/ install/ log/  # 本地构建产物
@@ -209,6 +206,10 @@ flowchart LR
   C --> E[dog_lifecycle]
   E --> F["/lifecycle/system_mode"]
   E --> G["/lifecycle/health_alarm"]
+  E --> Q["/lifecycle/degrade_command"]
+  R["/lifecycle/degrade_ack"] --> E
+  E --> S["/lifecycle/transition_command"]
+  T["/lifecycle/transition_status"] --> E
   F --> H[dog_behavior]
   H --> I["/dog/global_pose"]
   H --> J["/behavior/nav_execute"]
@@ -220,7 +221,11 @@ flowchart LR
   O --> P[RViz2]
   L --> N
   M --> N
+  N --> U["/behavior/grasp_feedback"]
+  U --> E
 ~~~
+
+说明：当前仓库内没有发现默认的 `/lifecycle/transition_command` 消费者；该链路需要外部生命周期管理节点配合回传 `/lifecycle/transition_status`。
 
 ## 8. 开发与测试
 
@@ -271,6 +276,7 @@ colcon test-result --all --verbose
 - docs/dog-lifecycle-ai-reference.md
 - docs/dog-behavior-ai-reference.md
 - docs/dog-serial-bridge-ai-reference.md
+- docs/dog-interfaces-ai-reference.md
 - docs/navigation-replacement-proposal.md
 
 ## 11. 维护说明

@@ -31,7 +31,7 @@
 - Follow existing ROS2 style in tests and nodes (`rclcpp`, `rclcpp_action`, explicit async wait helpers).
 
 ## Project-Specific Conventions
-- String payloads on lifecycle/behavior topics use semicolon-delimited `key=value` format; parse with `parseKeyValuePayload(...)`.
+- Most lifecycle/behavior topic payloads use semicolon-delimited `key=value` format; parse with `parseKeyValuePayload(...)`. `PlaceBoxes.payload` and `/behavior/grasp_feedback` are documented exceptions.
 - Nodes expose `*ForTest()` methods for deterministic assertions in gtests; prefer these over timing-sensitive black-box checks.
 - `dog_behavior` behavior tree XML source is `src/dog_behavior/config/behavior_tree.xml`; preserve node IDs and blackboard key compatibility when changing behavior flow.
 
@@ -59,3 +59,4 @@
 - `docs/dog-lifecycle-ai-reference.md` for lifecycle interfaces and state handling.
 - `docs/dog-behavior-ai-reference.md` for behavior tree interfaces and call structure.
 - `docs/dog-serial-bridge-ai-reference.md` for MCU serial protocol and action mapping.
+- `docs/dog-interfaces-ai-reference.md` for shared ROS msg/srv/action contracts.

@@ -1,6 +1,6 @@
 # dog_behavior AI 开发参考（当前代码基线）
 
-本文档描述的是当前代码基线（截至 2026-06-17），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
+本文档描述的是当前代码基线（截至 2026-07-04），用于 AI 与开发者进行检索、影响分析、回归设计与后续迭代。
 
 适用范围：`src/dog_behavior` 包。
 
@@ -223,6 +223,8 @@ Topic：
 说明：
 
 1. 当前运行架构中已无 Nav2 `/navigate_to_pose` 路径；目标点导航完成由 `dog_serial_bridge_nav_telemetry_node` 等待 MCU `RCArrivalMX` 回包判定。
+2. 统一 launch 默认不启动 `/behavior/nav_execute`、`/behavior/execute`、`/behavior/place_boxes` 的 Action Server；正式树需要启用 `use_nav_telemetry_serial:=true`、`use_serial_bridge:=true`，或由外部节点提供同名 server。
+3. `/behavior/nav_goal` 当前有两个发布源：`NavigateWaypointAction` 在发送 goal 前发布一次，`NavTelemetrySerialNode` 在接收 action goal 后也会发布一次；`/behavior/nav_exec_state` 只由 `NavigateWaypointAction` 发布。
 
 ---
 
@@ -267,6 +269,8 @@ Topic：
 9. `bt_tick_period_ms` = `100`
 10. `auto_start` = `true` — 启动后是否自动开始 tick，设为 false 则需手动发 `/behavior/execute_trigger`
 11. `waypoints_file` = `""`
+
+注意：当前 `dog_behavior/launch/launch.py` 没有声明或透传 `auto_start`，通过统一 launch 启动时不能直接使用 `auto_start:=false`。
 
 ### 6.2 关键 BT 端口默认值
 
@@ -342,7 +346,8 @@ Topic：
 
 1. `PlaceRuleAction` 使用 `group_a={0,1,5,4}`、`group_b={2,3,7,6}`。
 2. `counter` 在 `[0,7]` 内按 `match_type` 映射目标箱类型；超出范围输出空目标。
-3. `ExecutePlaceBoxesAction` 在主树中采用 fail-open（由 `ForceSuccess` 包裹）。
+3. `ExecutePlaceBoxesAction` 在主树中采用 fail-open（由 `ForceSuccess` 包裹）；放置 action 失败不会让整棵树失败，但只有 action 成功且 `accepted=true` 时才提交对应箱型计数。
+4. waypoint YAML 中的 `yaw` 被代码按弧度转换为四元数，没有角度到弧度转换。
 
 ---
 
@@ -371,14 +376,14 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 1. 已使用 CH340 `/dev/ttyUSB0` 验证 `behavior_tree_nav_serial_test.xml` 可通过真实测试程序发送航点。
 2. 启动后行为树自动开始执行（`auto_start=true`），日志出现 `BT tick completed` 与 `nav_telemetry_serial_tx ... RCNAV;...`。
-3. 左侧航点文件中 `waypoint_goal_1` 为 `x=0.0, y=0.3, yaw=1.57`，串口帧对应 `goal_x=0.000;goal_y=30.000;goal_yaw=1.570`；`goal_y` 为厘米单位。
+3. 左侧航点文件中 `waypoint_goal_1` 当前为 `x=0.0, y=1.0, yaw=1.57`，串口帧对应 `goal_x=0.000;goal_y=100.000;goal_yaw=1.570`；`goal_y` 为厘米单位。
 4. 下位机测试固件返回的 `0`、`1,0,0`、`0,-1,0` 等非协议行会被记录为 `nav_telemetry_serial_rx`，并因不是 `RCArrivalMX` 产生 `nav_serial_line_unmatched`。该现象只说明测试固件未返回正式到达帧，不表示串口发送失败。
 
 ---
 
 ## 10. 测试与覆盖基线
 
-当前 gtest 目标共 14 个：
+当前 gtest 目标共 15 个：
 
 1. `test_behavior_tree_node`：主节点参数、触发执行、模式阻断、XML 结构回归检查。
 2. `test_payload_utils`：字符串协议解析、完成态判定、pose 有效性校验。
@@ -394,6 +399,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 12. `test_execute_place_boxes_action`：accepted 成功提交计数、未 accepted 保持计数、无目标跳过。
 13. `test_publish_math_answer_action`：指定航点发布与不匹配失败。
 14. `test_auto_success_action`：测试模式自动成功叶子输出 `auto_success`。
+15. `test_test_visualization_node`：test mode 路线、目标、状态可视化输出。
 
 ---
 
@@ -405,7 +411,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 1. `${PROJECT_NAME}_lib`
 2. `${PROJECT_NAME}_bt_node`
-3. 14 个 gtest 目标（见第 10 节）
+3. 15 个 gtest 目标（见第 10 节）
 
 推荐命令：
 
