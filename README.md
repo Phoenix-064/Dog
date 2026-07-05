@@ -51,7 +51,7 @@ ros2 launch dog_behavior launch.py
 - 默认 launch 不提供 `/behavior/execute`、`/behavior/place_boxes`、`/behavior/nav_execute` 的 Action Server；正式行为树需要启用对应串口节点，或由外部节点提供同名 Action Server。
 - 同时尝试启动 livox_ros_driver2 与 point_lio；若第三方包未在当前 overlay 中可发现，会自动跳过，不阻塞核心节点。
 - 导航/串口/PointLIO 联调可使用 `test_mode:=true`，该模式加载 `behavior_tree_nav_serial_test.xml`，不启动感知节点，不等待抓取/放置串口回包，导航串口仍真实发送 `RCNAV` 并等待 `RCArrivalMX`。
-- 已完成 CH340 目标点导航串口实机收发验证：行为树测试程序可通过 `/behavior/nav_execute` 发送实际航点 `RCNAV` 帧，下位机测试程序可回传串口数据；测试固件若未返回 `RCArrivalMX`，上位机会按超时结束当前导航 goal。
+- 已完成 CH340 目标点导航串口实机收发验证：行为树测试程序可通过 `/behavior/nav_execute` 发送实际航点 `RCNAV` 帧，下位机测试程序可回传串口数据；测试固件若未返回 `RCArrivalMX`，上位机会继续等待当前导航 goal。
 
 ### 3.3 分终端启动（用于调试）
 
@@ -84,7 +84,7 @@ ros2 run dog_behavior dog_behavior_bt_node
 - use_nav_telemetry_serial（默认 false）：是否启动目标点导航串口 Action Server
 - nav_telemetry_serial_port（默认 /dev/ttyUSB1）：目标点导航串口
 - nav_telemetry_baud_rate（默认 115200）：目标点导航串口波特率
-- nav_telemetry_ack_timeout_ms（默认 10000）：等待 `RCArrivalMX` 到达回包的超时
+- nav_telemetry_ack_timeout_ms（兼容保留）：目标点导航不再使用该参数作为等待 `RCArrivalMX` 的超时
 - nav_telemetry_continuous_send_enabled（默认 true）：收到有效导航目标后是否持续发送最新定位与目标
 - nav_telemetry_continuous_send_period_ms（默认 100）：持续发送 `RCNAV` 的周期，单位毫秒
 - match_type（默认 left，可选 left/right）：比赛类型，决定加载哪组导航坐标文件
@@ -100,7 +100,7 @@ ros2 launch dog_behavior launch.py use_point_lio_rviz:=true
 
 # 启用项目 test mode RViz2 可视化（推荐用于雷达/定位/导航联调）
 export ROS_LOG_DIR=/tmp/ros_logs
-ros2 launch dog_behavior launch.py test_mode:=true use_test_visualization:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+ros2 launch dog_behavior launch.py test_mode:=true use_test_visualization:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0
 
 # 同时启动相机节点
 ros2 launch dog_behavior launch.py use_perception_camera:=true
@@ -113,10 +113,10 @@ ros2 launch dog_behavior launch.py use_serial_bridge:=true serial_port:=/dev/tty
 
 # 导航/目标点串口/PointLIO 联调（MID360 与 point_lio 正常启动，抓取/放置自动成功，不启动 YOLO；test_mode 会自动开启 dog_behavior_bt debug 定位日志）
 export ROS_LOG_DIR=/tmp/ros_logs
-ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0
 
 # 仅验证目标点导航串口与行为树测试程序（不启动 Livox/PointLIO，由测试输入提供位姿时使用）
-ros2 launch dog_behavior launch.py test_mode:=true use_livox:=false use_point_lio:=false use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=false use_point_lio:=false use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0
 
 # 指定比赛类型（左侧/右侧）
 ros2 launch dog_behavior launch.py match_type:=right
@@ -149,7 +149,7 @@ source /opt/ros/humble/setup.bash
 cd /home/ncu/wyr/Dog
 source install/setup.bash
 export ROS_LOG_DIR=/tmp/ros_logs
-ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0 nav_telemetry_ack_timeout_ms:=3000
+ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=mid360 use_point_lio:=true use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB0
 
 # 可选：观察导航执行状态
 ros2 topic echo /behavior/nav_exec_state std_msgs/msg/String --qos-reliability reliable --qos-durability volatile
@@ -176,7 +176,7 @@ ros2 topic echo --once /behavior/test_visualization/markers
 - `behavior_name=auto_start`：行为树已自动启动。
 - `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米，`goal_yaw` 单位为角度。
 - `nav_telemetry_continuous_tx ... RCNAV;...cur_x=...;cur_y=...;goal_x=...;goal_y=...`：收到有效目标后，上位机正在按周期持续发送最新定位与目标。
-- `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时出现 `nav_serial_line_unmatched` 或最终 `arrival_timeout` 不代表串口通讯失败。
+- `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时会继续等待正式到达回包，不代表串口通讯失败。
 
 ## 6. 项目结构与职责
 

@@ -7,6 +7,7 @@
 3. [dog_perception AI 开发查询文档](dog-perception-ai-reference.md)：感知节点、图像/点云同步、目标输出和 QoS。
 4. [dog_behavior AI 开发查询文档](dog-behavior-ai-reference.md)：统一 launch、行为树、BT 叶子和 Action 调用链。
 5. [dog_serial_bridge AI 开发查询文档](dog-serial-bridge-ai-reference.md)：抓取/放置/目标点导航 Action Server 与 MCU 串口协议。
+6. [2026-07-04 定位与导航异常诊断记录](navigation-localization-issue-2026-07-04.md)：实机测试中的坐标系、Point-LIO、航点 yaw 和串口回包问题证据。
 
 ## 当前运行契约
 

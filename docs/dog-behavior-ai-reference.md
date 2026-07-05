@@ -262,7 +262,7 @@ Topic：
 1. `NavigateWaypointAction.action_name` = `/behavior/nav_execute`
 2. `NavigateWaypointAction.state_topic` = `/behavior/nav_exec_state`
 3. `NavigateWaypointAction.goal_topic` = `/behavior/nav_goal`
-4. `NavigateWaypointAction.feedback_timeout_sec` = `10.0`
+4. `NavigateWaypointAction.feedback_timeout_sec` = `0.0`（默认禁用导航 feedback 超时）
 5. `NavigateWaypointAction.server_timeout_sec` = `1.0`
 6. `ExecuteBehaviorAction.action_name` = `/behavior/execute`
 7. `ExecuteBehaviorAction.feedback_timeout_sec` = `2.0`

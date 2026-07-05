@@ -7,6 +7,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -58,10 +59,20 @@ private:
   rclcpp_action::CancelResponse handleCancel(const std::shared_ptr<GoalHandle> goal_handle);
   void handleAccepted(const std::shared_ptr<GoalHandle> goal_handle);
   void executeGoal(const std::shared_ptr<GoalHandle> goal_handle);
+  void requestStop();
+  bool isStopping() const;
+  bool publishFeedbackSafe(
+    const std::shared_ptr<GoalHandle> & goal_handle,
+    const std::shared_ptr<NavigateWaypoint::Feedback> & feedback,
+    const char * state);
+  void finishGoalSafe(
+    const std::shared_ptr<GoalHandle> & goal_handle,
+    const std::shared_ptr<NavigateWaypoint::Result> & result,
+    const char * terminal_state);
   bool reserveGoalSlot();
   void releaseGoalSlot();
   bool waitForArrival(
-    const std::chrono::steady_clock::time_point & deadline,
+    const std::shared_ptr<GoalHandle> & goal_handle,
     const PoseCache & goal,
     std::string & detail);
   bool hasHostPoseArrived(const PoseCache & goal, std::string & detail) const;
@@ -89,11 +100,11 @@ private:
   PoseCache last_goal_pose_;
 
   std::mutex goal_mutex_;
+  std::mutex stop_mutex_;
+  std::atomic_bool stopping_;
   bool goal_reserved_;
   bool send_shutdown_arrival_on_exit_;
   int shutdown_arrival_repeat_count_;
-  int timeout_stop_repeat_count_;
-  int timeout_stop_interval_ms_;
   bool shutdown_arrival_sent_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_sub_;

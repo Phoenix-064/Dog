@@ -15,7 +15,7 @@ NavigateWaypointAction::NavigateWaypointAction(const std::string & name, const B
 , canceled_(false)
 , result_code_(rclcpp_action::ResultCode::UNKNOWN)
 , result_accepted_(false)
-, feedback_timeout_sec_(10.0)
+, feedback_timeout_sec_(0.0)
 {
 }
 
@@ -26,7 +26,7 @@ BT::PortsList NavigateWaypointAction::providedPorts()
     BT::InputPort<std::string>("action_name", "/behavior/nav_execute"),
     BT::InputPort<std::string>("state_topic", "/behavior/nav_exec_state"),
     BT::InputPort<std::string>("goal_topic", "/behavior/nav_goal"),
-    BT::InputPort<double>("feedback_timeout_sec", 10.0, "feedback timeout seconds"),
+    BT::InputPort<double>("feedback_timeout_sec", 0.0, "feedback timeout seconds; <=0 disables timeout"),
     BT::InputPort<double>("server_timeout_sec", 1.0, "action server discovery timeout seconds"),
   };
 }
@@ -62,8 +62,7 @@ BT::NodeStatus NavigateWaypointAction::onStart()
     return BT::NodeStatus::FAILURE;
   }
 
-  feedback_timeout_sec_ = feedback_timeout_input && feedback_timeout_input.value() > 0.0 ?
-    feedback_timeout_input.value() : 10.0;
+  feedback_timeout_sec_ = feedback_timeout_input ? feedback_timeout_input.value() : 0.0;
   const double server_timeout_sec = server_timeout_input && server_timeout_input.value() > 0.0 ?
     server_timeout_input.value() : 1.0;
 
@@ -148,7 +147,7 @@ BT::NodeStatus NavigateWaypointAction::onRunning()
 
     if (!result_ready_) {
       const double feedback_elapsed_sec = (node_->now() - last_feedback_time_).seconds();
-      if (feedback_elapsed_sec > feedback_timeout_sec_) {
+      if (feedback_timeout_sec_ > 0.0 && feedback_elapsed_sec > feedback_timeout_sec_) {
         goal_handle_to_cancel = active_goal_handle_;
       } else {
         return BT::NodeStatus::RUNNING;

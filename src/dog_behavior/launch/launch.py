@@ -137,12 +137,6 @@ def generate_launch_description() -> LaunchDescription:
     nav_telemetry_shutdown_arrival_repeat_count = LaunchConfiguration(
         "nav_telemetry_shutdown_arrival_repeat_count"
     )
-    nav_telemetry_timeout_stop_repeat_count = LaunchConfiguration(
-        "nav_telemetry_timeout_stop_repeat_count"
-    )
-    nav_telemetry_timeout_stop_interval_ms = LaunchConfiguration(
-        "nav_telemetry_timeout_stop_interval_ms"
-    )
     map_to_camera_x = LaunchConfiguration("map_to_camera_x")
     map_to_camera_y = LaunchConfiguration("map_to_camera_y")
     map_to_camera_z = LaunchConfiguration("map_to_camera_z")
@@ -253,7 +247,7 @@ def generate_launch_description() -> LaunchDescription:
     declare_nav_telemetry_ack_timeout_ms = DeclareLaunchArgument(
         "nav_telemetry_ack_timeout_ms",
         default_value="10000",
-        description="Navigation arrival acknowledgement timeout in milliseconds.",
+        description="Compatibility parameter; serial waypoint navigation no longer times out while waiting for arrival.",
     )
 
     declare_nav_telemetry_params_file = DeclareLaunchArgument(
@@ -288,18 +282,6 @@ def generate_launch_description() -> LaunchDescription:
         "nav_telemetry_shutdown_arrival_repeat_count",
         default_value="3",
         description="Number of shutdown arrival frames to send on test-mode exit.",
-    )
-
-    declare_nav_telemetry_timeout_stop_repeat_count = DeclareLaunchArgument(
-        "nav_telemetry_timeout_stop_repeat_count",
-        default_value="3",
-        description="Number of current-pose stop frames to send after navigation arrival timeout.",
-    )
-
-    declare_nav_telemetry_timeout_stop_interval_ms = DeclareLaunchArgument(
-        "nav_telemetry_timeout_stop_interval_ms",
-        default_value="20",
-        description="Interval between timeout stop frames in milliseconds.",
     )
 
     declare_map_to_camera_x = DeclareLaunchArgument(
@@ -416,14 +398,6 @@ def generate_launch_description() -> LaunchDescription:
                 nav_telemetry_shutdown_arrival_repeat_count,
                 value_type=int,
             ),
-            "timeout_stop_repeat_count": ParameterValue(
-                nav_telemetry_timeout_stop_repeat_count,
-                value_type=int,
-            ),
-            "timeout_stop_interval_ms": ParameterValue(
-                nav_telemetry_timeout_stop_interval_ms,
-                value_type=int,
-            ),
         }],
     )
 
@@ -476,8 +450,6 @@ def generate_launch_description() -> LaunchDescription:
         declare_nav_telemetry_continuous_send_period_ms,
         declare_nav_telemetry_read_line_delimiter,
         declare_nav_telemetry_shutdown_arrival_repeat_count,
-        declare_nav_telemetry_timeout_stop_repeat_count,
-        declare_nav_telemetry_timeout_stop_interval_ms,
         declare_map_to_camera_x,
         declare_map_to_camera_y,
         declare_map_to_camera_z,

@@ -141,11 +141,13 @@ flowchart TD
 | --- | --- | --- |
 | `serial_port` | `/dev/ttyUSB1` | 目标点导航串口设备路径 |
 | `baud_rate` | `115200` | 目标点导航串口波特率 |
-| `ack_timeout_ms` | `10000` | 等待 `RCArrivalMX` 到达回包的超时时间 |
+| `ack_timeout_ms` | `10000` | 兼容保留；目标点导航不再用它限制等待 `RCArrivalMX` 的时长 |
 | `reconnect_period_ms` | `1000` | 串口打开或写入失败后的重连间隔 |
 | `continuous_send_enabled` | `true` | 是否在收到有效目标后持续发送最新当前位置与目标 |
 | `continuous_send_period_ms` | `100` | 持续发送 `RCNAV` 的周期 |
 | `write_newline` | `true` | 写串口帧时是否追加 `\n` |
+| `send_shutdown_arrival_on_exit` | `false` | 退出时是否将当前位置作为目标点发送停止帧 |
+| `shutdown_arrival_repeat_count` | `1` | 退出停止帧重复发送次数，统一 launch 在 `test_mode=true` 时默认传入 `3` |
 | `read_line_delimiter` | `\\n` | 读取 MCU 回包的行分隔符 |
 | `current_pose_topic` | `/dog/global_pose` | 当前位置订阅 topic |
 | `goal_pose_topic` | `/behavior/nav_goal` | 当前目标发布 topic |
@@ -154,7 +156,7 @@ flowchart TD
 launch 入口由 `dog_behavior/launch/launch.py` 提供，可选启用：
 
 ```bash
-ros2 launch dog_behavior launch.py use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1 nav_telemetry_ack_timeout_ms:=10000
+ros2 launch dog_behavior launch.py use_nav_telemetry_serial:=true nav_telemetry_serial_port:=/dev/ttyUSB1
 ```
 
 导航/串口/PointLIO 测试模式会跳过抓取/放置串口桥，但保留目标点导航串口闭环：
@@ -204,7 +206,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 ```text
 RCPickUpBoxes\n
 RCplace=0,3,count=3\n
-RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y=42.000;cur_z=0.000;cur_yaw=0.000;goal_valid=1;goal_frame=map;goal_x=300.000;goal_y=200.000;goal_z=0.000;goal_yaw=0.000\n
+RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y=42.000;cur_z=0.000;cur_yaw=-10.500;goal_valid=1;goal_frame=map;goal_x=300.000;goal_y=200.000;goal_z=0.000;goal_yaw=-20.000\n
 RCArrivalMX\n
 ```
 
@@ -295,7 +297,7 @@ state = waiting_place_ack
 串口发送：
 
 ```text
-RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y=42.000;cur_z=0.000;cur_yaw=0.000;goal_valid=1;goal_frame=map;goal_x=300.000;goal_y=200.000;goal_z=0.000;goal_yaw=0.000\n
+RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y=42.000;cur_z=0.000;cur_yaw=-10.500;goal_valid=1;goal_frame=map;goal_x=300.000;goal_y=200.000;goal_z=0.000;goal_yaw=-20.000\n
 ```
 
 字段说明：
@@ -307,18 +309,18 @@ RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y
 | `cur_valid` | 是否已有合法当前位置 |
 | `cur_frame` | 当前位置 frame id，非法字符会替换为 `_` |
 | `cur_x/cur_y/cur_z` | 当前三维位置，串口发送单位为厘米；ROS 内部 `PoseStamped` 仍为米，发送前乘以 100 |
-| `cur_yaw` | 当前 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度发送 |
+| `cur_yaw` | 当前 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度，并在发送到 MCU 时取负号 |
 | `goal_valid` | 是否已有合法导航目标 |
 | `goal_frame` | 目标 frame id，非法字符会替换为 `_` |
 | `goal_x/goal_y/goal_z` | 目标三维位置，串口发送单位为厘米；ROS 内部 `PoseStamped` 仍为米，发送前乘以 100 |
-| `goal_yaw` | 目标 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度发送 |
+| `goal_yaw` | 目标 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度，并在发送到 MCU 时取负号 |
 
 回包映射：
 
 | MCU 回包 | Action 状态 | Result 字段 |
 | --- | --- | --- |
 | `RCArrivalMX` | `succeed` | `accepted=true`, `detail=arrival_ok` |
-| 超时 | `abort` | `accepted=false`, `detail=arrival_timeout` |
+| 等待中取消 | `canceled` | `accepted=false`, `detail=goal_canceled` |
 | 串口未就绪 | `abort` | `accepted=false`, `detail=serial_not_ready` |
 | 串口读写错误 | `abort` | `accepted=false`, `detail=serial_*` |
 
@@ -348,7 +350,7 @@ state = waiting_arrival
 1. 日志出现 `nav_telemetry_serial_ready port=/dev/ttyUSB0 baud=115200` 表示 CH340 串口已打开。
 2. 日志出现 `nav_telemetry_serial_tx ... RCNAV;...` 表示上位机已向下位机发送目标点帧。
 3. 日志出现 `nav_telemetry_serial_rx ...` 表示已收到下位机回传，通讯层已打通。
-4. 非 `RCArrivalMX` 回包会产生 `nav_serial_line_unmatched`，随后可能因 `ack_timeout_ms` 到达而返回 `arrival_timeout`；在测试固件场景下这是协议层预期结果，不等同于 USB/串口通讯失败。
+4. 非 `RCArrivalMX` 回包会继续等待正式到达帧；在测试固件场景下这是协议层预期结果，不等同于 USB/串口通讯失败。
 
 ---
 
