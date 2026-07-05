@@ -246,7 +246,8 @@ protected:
     const int shutdown_arrival_repeat_count = 1,
     const int timeout_stop_repeat_count = 3,
     const bool continuous_send_enabled = false,
-    const int continuous_send_period_ms = 100) const
+    const int continuous_send_period_ms = 100,
+    const std::string & arrival_check_mode = "serial_reply") const
   {
     rclcpp::NodeOptions options;
     options.append_parameter_override("serial_port", "/tmp/fake_nav");
@@ -254,6 +255,10 @@ protected:
     options.append_parameter_override("reconnect_period_ms", 50);
     options.append_parameter_override("continuous_send_enabled", continuous_send_enabled);
     options.append_parameter_override("continuous_send_period_ms", continuous_send_period_ms);
+    options.append_parameter_override("arrival_check_mode", arrival_check_mode);
+    options.append_parameter_override("arrival_xy_tolerance_m", 0.15);
+    options.append_parameter_override("arrival_yaw_tolerance_deg", 10.0);
+    options.append_parameter_override("arrival_check_period_ms", 10);
     options.append_parameter_override("write_newline", true);
     options.append_parameter_override("send_shutdown_arrival_on_exit", send_shutdown_arrival);
     options.append_parameter_override("shutdown_arrival_repeat_count", shutdown_arrival_repeat_count);
@@ -374,6 +379,96 @@ TEST_F(NavTelemetrySerialNodeTest, NavigateGoalWritesFrameAndSucceedsOnArrival)
   EXPECT_TRUE(goal_observed);
   EXPECT_EQ(observed_goal.header.frame_id, "map");
   EXPECT_DOUBLE_EQ(observed_goal.pose.position.x, 3.0);
+
+  executor.remove_node(client_node);
+  executor.remove_node(nav_node);
+}
+
+TEST_F(NavTelemetrySerialNodeTest, NavigateGoalSucceedsOnHostPoseArrivalWithoutSerialReply)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(500, false, 1, 3, false, 100, "host_pose"), fake_serial);
+  auto client_node = std::make_shared<rclcpp::Node>("nav_action_host_arrival_client");
+  auto client = rclcpp_action::create_client<NavigateWaypoint>(client_node, "/test/nav/execute");
+  auto current_pub = client_node->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/test/nav/current_pose",
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+  executor.add_node(client_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return client->wait_for_action_server(std::chrono::seconds(0));
+  }));
+
+  current_pub->publish(makePose("map", 2.0, 1.0, 90.0));
+  for (int i = 0; i < 50; ++i) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = makePose("map", 2.05, 1.05, 95.0);
+
+  ActionCallState state;
+  auto goal_handle = sendGoal(executor, client, goal, state);
+  ASSERT_NE(goal_handle, nullptr);
+  ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&state]() {
+    return state.result_ready;
+  }));
+
+  ASSERT_TRUE(state.wrapped_result.result);
+  EXPECT_TRUE(state.wrapped_result.result->accepted);
+  EXPECT_NE(state.wrapped_result.result->detail.find("host_arrival_ok"), std::string::npos);
+
+  executor.remove_node(client_node);
+  executor.remove_node(nav_node);
+}
+
+TEST_F(NavTelemetrySerialNodeTest, NavigateGoalDoesNotHostArriveWhenYawExceedsTolerance)
+{
+  auto fake_serial = std::make_shared<FakeSerialConnection>(true);
+  auto nav_node = std::make_shared<dog_serial_bridge::NavTelemetrySerialNode>(
+    makeOptions(80, false, 1, 3, false, 100, "host_pose"), fake_serial);
+  auto client_node = std::make_shared<rclcpp::Node>("nav_action_host_yaw_timeout_client");
+  auto client = rclcpp_action::create_client<NavigateWaypoint>(client_node, "/test/nav/execute");
+  auto current_pub = client_node->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/test/nav/current_pose",
+    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(nav_node);
+  executor.add_node(client_node);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
+    return client->wait_for_action_server(std::chrono::seconds(0));
+  }));
+
+  current_pub->publish(makePose("map", 2.0, 1.0, 0.0));
+  for (int i = 0; i < 50; ++i) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  NavigateWaypoint::Goal goal;
+  goal.target_pose = makePose("map", 2.0, 1.0, 30.0);
+
+  ActionCallState state;
+  auto goal_handle = sendGoal(executor, client, goal, state);
+  ASSERT_NE(goal_handle, nullptr);
+
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&state]() {
+    return state.result_ready;
+  }));
+
+  ASSERT_TRUE(state.wrapped_result.result);
+  EXPECT_FALSE(state.wrapped_result.result->accepted);
+  EXPECT_NE(state.wrapped_result.result->detail.find("arrival_timeout"), std::string::npos);
+  EXPECT_NE(state.wrapped_result.result->detail.find("yaw_error_deg=30.000"), std::string::npos);
 
   executor.remove_node(client_node);
   executor.remove_node(nav_node);

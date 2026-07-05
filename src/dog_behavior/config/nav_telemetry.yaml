@@ -1,0 +1,6 @@
+/dog_serial_bridge_nav_telemetry:
+  ros__parameters:
+    arrival_check_mode: host_pose
+    arrival_xy_tolerance_m: 0.15
+    arrival_yaw_tolerance_deg: 10.0
+    arrival_check_period_ms: 50

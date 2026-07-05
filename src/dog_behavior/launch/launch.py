@@ -126,6 +126,7 @@ def generate_launch_description() -> LaunchDescription:
     nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
     nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
     nav_telemetry_ack_timeout_ms = LaunchConfiguration("nav_telemetry_ack_timeout_ms")
+    nav_telemetry_params_file = LaunchConfiguration("nav_telemetry_params_file")
     nav_telemetry_continuous_send_enabled = LaunchConfiguration(
         "nav_telemetry_continuous_send_enabled"
     )
@@ -253,6 +254,16 @@ def generate_launch_description() -> LaunchDescription:
         "nav_telemetry_ack_timeout_ms",
         default_value="10000",
         description="Navigation arrival acknowledgement timeout in milliseconds.",
+    )
+
+    declare_nav_telemetry_params_file = DeclareLaunchArgument(
+        "nav_telemetry_params_file",
+        default_value=os.path.join(
+            get_package_share_directory("dog_behavior"),
+            "config",
+            "nav_telemetry.yaml",
+        ),
+        description="YAML params file for host-side navigation arrival checks.",
     )
 
     declare_nav_telemetry_continuous_send_enabled = DeclareLaunchArgument(
@@ -384,7 +395,7 @@ def generate_launch_description() -> LaunchDescription:
         name="dog_serial_bridge_nav_telemetry",
         output="screen",
         condition=IfCondition(use_nav_telemetry_serial),
-        parameters=[{
+        parameters=[nav_telemetry_params_file, {
             "serial_port": nav_telemetry_serial_port,
             "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
             "ack_timeout_ms": ParameterValue(nav_telemetry_ack_timeout_ms, value_type=int),
@@ -460,6 +471,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_nav_telemetry_serial_port,
         declare_nav_telemetry_baud_rate,
         declare_nav_telemetry_ack_timeout_ms,
+        declare_nav_telemetry_params_file,
         declare_nav_telemetry_continuous_send_enabled,
         declare_nav_telemetry_continuous_send_period_ms,
         declare_nav_telemetry_read_line_delimiter,

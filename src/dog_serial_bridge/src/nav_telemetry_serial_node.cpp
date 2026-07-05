@@ -70,6 +70,17 @@ double yawFromPose(const geometry_msgs::msg::Pose & pose)
   return std::atan2(siny_cosp, cosy_cosp);
 }
 
+double normalizeAngleRadians(double angle)
+{
+  while (angle > 3.14159265358979323846) {
+    angle -= 2.0 * 3.14159265358979323846;
+  }
+  while (angle < -3.14159265358979323846) {
+    angle += 2.0 * 3.14159265358979323846;
+  }
+  return angle;
+}
+
 void appendPoseFields(
   std::ostringstream & stream,
   const char * prefix,
@@ -101,6 +112,10 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 , reconnect_period_ms_(1000)
 , continuous_send_enabled_(true)
 , continuous_send_period_ms_(100)
+, arrival_check_mode_("host_pose")
+, arrival_xy_tolerance_m_(0.15)
+, arrival_yaw_tolerance_deg_(10.0)
+, arrival_check_period_ms_(50)
 , goal_reserved_(false)
 , send_shutdown_arrival_on_exit_(false)
 , shutdown_arrival_repeat_count_(1)
@@ -169,6 +184,10 @@ void NavTelemetrySerialNode::declareParameters()
   declare_parameter<int>("reconnect_period_ms", 1000);
   declare_parameter<bool>("continuous_send_enabled", true);
   declare_parameter<int>("continuous_send_period_ms", 100);
+  declare_parameter<std::string>("arrival_check_mode", "host_pose");
+  declare_parameter<double>("arrival_xy_tolerance_m", 0.15);
+  declare_parameter<double>("arrival_yaw_tolerance_deg", 10.0);
+  declare_parameter<int>("arrival_check_period_ms", 50);
   declare_parameter<bool>("write_newline", true);
   declare_parameter<bool>("send_shutdown_arrival_on_exit", false);
   declare_parameter<int>("shutdown_arrival_repeat_count", 1);
@@ -185,6 +204,10 @@ void NavTelemetrySerialNode::loadParameters()
   reconnect_period_ms_ = get_parameter("reconnect_period_ms").as_int();
   continuous_send_enabled_ = get_parameter("continuous_send_enabled").as_bool();
   continuous_send_period_ms_ = get_parameter("continuous_send_period_ms").as_int();
+  arrival_check_mode_ = get_parameter("arrival_check_mode").as_string();
+  arrival_xy_tolerance_m_ = get_parameter("arrival_xy_tolerance_m").as_double();
+  arrival_yaw_tolerance_deg_ = get_parameter("arrival_yaw_tolerance_deg").as_double();
+  arrival_check_period_ms_ = get_parameter("arrival_check_period_ms").as_int();
   write_newline_ = get_parameter("write_newline").as_bool();
   send_shutdown_arrival_on_exit_ = get_parameter("send_shutdown_arrival_on_exit").as_bool();
   shutdown_arrival_repeat_count_ = get_parameter("shutdown_arrival_repeat_count").as_int();
@@ -206,6 +229,34 @@ void NavTelemetrySerialNode::loadParameters()
       "Invalid continuous_send_period_ms=%d, fallback to 100",
       continuous_send_period_ms_);
     continuous_send_period_ms_ = 100;
+  }
+  if (arrival_check_mode_ != "host_pose" && arrival_check_mode_ != "serial_reply") {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid arrival_check_mode=%s, fallback to host_pose",
+      arrival_check_mode_.c_str());
+    arrival_check_mode_ = "host_pose";
+  }
+  if (!std::isfinite(arrival_xy_tolerance_m_) || arrival_xy_tolerance_m_ < 0.0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid arrival_xy_tolerance_m=%.3f, fallback to 0.15",
+      arrival_xy_tolerance_m_);
+    arrival_xy_tolerance_m_ = 0.15;
+  }
+  if (!std::isfinite(arrival_yaw_tolerance_deg_) || arrival_yaw_tolerance_deg_ < 0.0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid arrival_yaw_tolerance_deg=%.3f, fallback to 10.0",
+      arrival_yaw_tolerance_deg_);
+    arrival_yaw_tolerance_deg_ = 10.0;
+  }
+  if (arrival_check_period_ms_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid arrival_check_period_ms=%d, fallback to 50",
+      arrival_check_period_ms_);
+    arrival_check_period_ms_ = 50;
   }
   if (shutdown_arrival_repeat_count_ <= 0) {
     RCLCPP_WARN(
@@ -475,8 +526,8 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
 
   std::string detail;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ack_timeout_ms_);
-  const bool arrived = waitForArrival(deadline, detail);
-  if (!arrived && detail == "arrival_timeout") {
+  const bool arrived = waitForArrival(deadline, goal, detail);
+  if (!arrived && detail.rfind("arrival_timeout", 0) == 0) {
     const bool stop_sent = sendCurrentPoseStopFrames(
       "timeout_stop",
       "nav_timeout_stop",
@@ -487,7 +538,7 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
 
   auto result = std::make_shared<NavigateWaypoint::Result>();
   result->accepted = arrived;
-  result->detail = arrived ? "arrival_ok" : detail;
+  result->detail = detail;
 
   if (goal_handle->is_canceling()) {
     result->accepted = false;
@@ -639,14 +690,56 @@ bool NavTelemetrySerialNode::sendCurrentPoseStopFrames(
   return any_sent;
 }
 
+bool NavTelemetrySerialNode::hasHostPoseArrived(const PoseCache & goal, std::string & detail) const
+{
+  PoseCache current;
+  {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    current = current_pose_;
+  }
+
+  if (!current.valid) {
+    detail = "arrival_timeout;reason=no_current_pose";
+    return false;
+  }
+
+  const double dx = current.pose.pose.position.x - goal.pose.pose.position.x;
+  const double dy = current.pose.pose.position.y - goal.pose.pose.position.y;
+  const double xy_distance = std::sqrt(dx * dx + dy * dy);
+  const double yaw_error_deg = std::abs(
+    normalizeAngleRadians(yawFromPose(current.pose.pose) - yawFromPose(goal.pose.pose)) *
+    kRadiansToDegrees);
+
+  if (xy_distance <= arrival_xy_tolerance_m_ && yaw_error_deg <= arrival_yaw_tolerance_deg_) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(3)
+           << "host_arrival_ok;xy_error_m=" << xy_distance
+           << ";yaw_error_deg=" << yaw_error_deg;
+    detail = stream.str();
+    return true;
+  }
+
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3)
+         << "arrival_timeout;xy_error_m=" << xy_distance
+         << ";yaw_error_deg=" << yaw_error_deg;
+  detail = stream.str();
+  return false;
+}
+
 bool NavTelemetrySerialNode::waitForArrival(
   const std::chrono::steady_clock::time_point & deadline,
+  const PoseCache & goal,
   std::string & detail)
 {
   std::string receive_buffer;
   std::string last_observed;
   size_t debug_frame_count = 0U;
   while (std::chrono::steady_clock::now() < deadline) {
+    if (arrival_check_mode_ == "host_pose" && hasHostPoseArrived(goal, detail)) {
+      return true;
+    }
+
     std::shared_ptr<SerialConnection> serial_connection;
     {
       std::lock_guard<std::mutex> lock(serial_mutex_);
@@ -659,7 +752,9 @@ bool NavTelemetrySerialNode::waitForArrival(
 
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
       deadline - std::chrono::steady_clock::now());
-    const auto read_timeout = std::min(std::chrono::milliseconds(100), remaining);
+    const auto read_timeout = std::min(
+      std::chrono::milliseconds(arrival_check_period_ms_),
+      remaining);
     const auto read_result = serial_connection->readBytes(read_timeout);
     if (read_result.status == SerialConnection::ReadStatus::kTimeout) {
       continue;
@@ -674,7 +769,7 @@ bool NavTelemetrySerialNode::waitForArrival(
         serial_config_.port.c_str(),
         read_result.data.size(),
         escapeSerialPayload(read_result.data).c_str());
-      if (containsArrivalReply(receive_buffer)) {
+      if (arrival_check_mode_ == "serial_reply" && containsArrivalReply(receive_buffer)) {
         serial_connection->clearReadBuffer();
         detail = "arrival_ok";
         return true;
@@ -690,7 +785,13 @@ bool NavTelemetrySerialNode::waitForArrival(
     return false;
   }
 
-  detail = "arrival_timeout";
+  if (arrival_check_mode_ == "host_pose") {
+    std::string host_detail;
+    hasHostPoseArrived(goal, host_detail);
+    detail = host_detail.empty() ? "arrival_timeout" : host_detail;
+  } else {
+    detail = "arrival_timeout";
+  }
   if (!last_observed.empty()) {
     RCLCPP_WARN(
       get_logger(),

@@ -60,7 +60,11 @@ private:
   void executeGoal(const std::shared_ptr<GoalHandle> goal_handle);
   bool reserveGoalSlot();
   void releaseGoalSlot();
-  bool waitForArrival(const std::chrono::steady_clock::time_point & deadline, std::string & detail);
+  bool waitForArrival(
+    const std::chrono::steady_clock::time_point & deadline,
+    const PoseCache & goal,
+    std::string & detail);
+  bool hasHostPoseArrived(const PoseCache & goal, std::string & detail) const;
   bool sendCurrentPoseStopFrames(const std::string & event, const char * log_prefix, int repeat_count);
 
   std::shared_ptr<SerialConnection> serial_connection_;
@@ -74,6 +78,10 @@ private:
   int reconnect_period_ms_;
   bool continuous_send_enabled_;
   int continuous_send_period_ms_;
+  std::string arrival_check_mode_;
+  double arrival_xy_tolerance_m_;
+  double arrival_yaw_tolerance_deg_;
+  int arrival_check_period_ms_;
   rclcpp::Time next_reconnect_time_;
 
   mutable std::mutex pose_mutex_;
