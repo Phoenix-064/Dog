@@ -46,6 +46,10 @@ private:
   bool maybeReconnect();
   std::string buildFrame(const rclcpp::Time & stamp, const PoseCache & current, const PoseCache & goal, const std::string & event = "");
   std::string appendConfiguredNewline(const std::string & frame) const;
+  void continuousSendTimerCallback();
+  void updateLastGoalPose(const PoseCache & goal);
+  bool getContinuousTelemetrySnapshot(PoseCache & current, PoseCache & goal) const;
+  bool writeFrame(const std::string & frame, const char * log_prefix, std::string & detail);
   bool isValidGoal(const geometry_msgs::msg::PoseStamped & goal) const;
   void publishGoal(const geometry_msgs::msg::PoseStamped & goal);
   rclcpp_action::GoalResponse handleGoal(
@@ -61,12 +65,15 @@ private:
 
   std::shared_ptr<SerialConnection> serial_connection_;
   mutable std::mutex serial_mutex_;
+  std::mutex write_mutex_;
   bool serial_ready_;
   std::string serial_error_;
   SerialConfig serial_config_;
   bool write_newline_;
   int ack_timeout_ms_;
   int reconnect_period_ms_;
+  bool continuous_send_enabled_;
+  int continuous_send_period_ms_;
   rclcpp::Time next_reconnect_time_;
 
   mutable std::mutex pose_mutex_;
@@ -83,6 +90,7 @@ private:
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_pub_;
+  rclcpp::TimerBase::SharedPtr continuous_send_timer_;
   rclcpp_action::Server<NavigateWaypoint>::SharedPtr action_server_;
 };
 

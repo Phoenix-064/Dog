@@ -58,7 +58,8 @@
 1. 提供 `/behavior/nav_execute` Action Server，类型为 `dog_interfaces/action/NavigateWaypoint`。
 2. 订阅 `/dog/global_pose` 获取当前位置，用于填充 `RCNAV` 帧中的 `cur_*` 字段。
 3. 收到导航目标后发布 `/behavior/nav_goal`，供观测与兼容已有调试链路。
-4. 通过独立串口发送一次 `RCNAV` 目标帧，等待 MCU 返回固定字符串 `RCArrivalMX` 后完成 Action。
+4. 通过独立串口立即发送一次 `RCNAV` 目标帧，并在有有效目标后按周期持续发送最新当前位置与该目标。
+5. 等待 MCU 返回固定字符串 `RCArrivalMX` 后完成 Action；持续发送不改变到达判定。
 
 数据主链路：
 
@@ -142,6 +143,8 @@ flowchart TD
 | `baud_rate` | `115200` | 目标点导航串口波特率 |
 | `ack_timeout_ms` | `10000` | 等待 `RCArrivalMX` 到达回包的超时时间 |
 | `reconnect_period_ms` | `1000` | 串口打开或写入失败后的重连间隔 |
+| `continuous_send_enabled` | `true` | 是否在收到有效目标后持续发送最新当前位置与目标 |
+| `continuous_send_period_ms` | `100` | 持续发送 `RCNAV` 的周期 |
 | `write_newline` | `true` | 写串口帧时是否追加 `\n` |
 | `read_line_delimiter` | `\\n` | 读取 MCU 回包的行分隔符 |
 | `current_pose_topic` | `/dog/global_pose` | 当前位置订阅 topic |
@@ -331,13 +334,14 @@ state = waiting_arrival
 
 约束：
 
-1. 每个 Action goal 只发送一次 `RCNAV` 目标帧，不再按周期连续发送。
+1. 收到 Action goal 后立即发送一次 `RCNAV`，随后在 `continuous_send_enabled=true` 时以 `continuous_send_period_ms` 周期持续发送最新当前位置与最新目标。
 2. `RCArrivalMX` 是固定完成字符串，不解析 `X` 或坐标匹配关系。
-3. 未收到当前位置时 `cur_valid=0`，对应坐标填 `0.000`，frame 填 `unknown`。
+3. 持续发送只在已有有效目标后进行；不会在无目标时发送 `goal_valid=0` 的无目标帧。
 4. 目标位姿必须是有限数值且四元数范数合法，否则 Action goal 直接 `REJECT`。
-5. `RCNAV` 帧不包含 `state`、`goal_active` 或 `/behavior/nav_exec_state` 数据；行为层状态由 `dog_behavior` 的 BT 叶子发布。
-6. `test_mode:=true` 不改变目标点导航串口协议；它只绕过抓取/放置串口链路。
-7. 下位机烧录测试固件时，可能只返回数字或逗号分隔测试数据；节点会记录 `nav_telemetry_serial_rx`，但只有收到完整 `RCArrivalMX` 才会将 Action 判定为到达成功。
+5. `RCNAV` 帧必须以 `RCNAV;` 开头，带齐 `cur_valid`、`goal_valid`、`cur_x`、`cur_y`、`goal_x`、`goal_y`、`cur_yaw`、`goal_yaw` 8 个必需字段。
+6. `RCNAV` 帧不包含 `state`、`goal_active` 或 `/behavior/nav_exec_state` 数据；行为层状态由 `dog_behavior` 的 BT 叶子发布。
+7. `test_mode:=true` 不改变目标点导航串口协议；它只绕过抓取/放置串口链路。
+8. 下位机烧录测试固件时，可能只返回数字或逗号分隔测试数据；节点会记录 `nav_telemetry_serial_rx`，但只有收到完整 `RCArrivalMX` 才会将 Action 判定为到达成功。
 
 实机验证要点：
 

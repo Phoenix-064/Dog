@@ -99,6 +99,8 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 , write_newline_(true)
 , ack_timeout_ms_(10000)
 , reconnect_period_ms_(1000)
+, continuous_send_enabled_(true)
+, continuous_send_period_ms_(100)
 , goal_reserved_(false)
 , send_shutdown_arrival_on_exit_(false)
 , shutdown_arrival_repeat_count_(1)
@@ -124,6 +126,12 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 
   initializeSerial();
 
+  if (continuous_send_enabled_) {
+    continuous_send_timer_ = create_wall_timer(
+      std::chrono::milliseconds(continuous_send_period_ms_),
+      std::bind(&NavTelemetrySerialNode::continuousSendTimerCallback, this));
+  }
+
   using namespace std::placeholders;
   action_server_ = rclcpp_action::create_server<NavigateWaypoint>(
     this,
@@ -134,17 +142,22 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 
   RCLCPP_INFO(
     get_logger(),
-    "NavTelemetrySerialNode initialized, action_name=%s, current_pose_topic=%s, goal_pose_topic=%s, serial_port=%s, baud=%d, ack_timeout_ms=%d",
+    "NavTelemetrySerialNode initialized, action_name=%s, current_pose_topic=%s, goal_pose_topic=%s, serial_port=%s, baud=%d, ack_timeout_ms=%d, continuous_send_enabled=%d, continuous_send_period_ms=%d",
     action_name.c_str(),
     current_pose_topic.c_str(),
     goal_pose_topic.c_str(),
     serial_config_.port.c_str(),
     serial_config_.baud_rate,
-    ack_timeout_ms_);
+    ack_timeout_ms_,
+    continuous_send_enabled_ ? 1 : 0,
+    continuous_send_period_ms_);
 }
 
 NavTelemetrySerialNode::~NavTelemetrySerialNode()
 {
+  if (continuous_send_timer_) {
+    continuous_send_timer_->cancel();
+  }
   closeSerial();
 }
 
@@ -154,6 +167,8 @@ void NavTelemetrySerialNode::declareParameters()
   declare_parameter<int>("baud_rate", 115200);
   declare_parameter<int>("ack_timeout_ms", 10000);
   declare_parameter<int>("reconnect_period_ms", 1000);
+  declare_parameter<bool>("continuous_send_enabled", true);
+  declare_parameter<int>("continuous_send_period_ms", 100);
   declare_parameter<bool>("write_newline", true);
   declare_parameter<bool>("send_shutdown_arrival_on_exit", false);
   declare_parameter<int>("shutdown_arrival_repeat_count", 1);
@@ -168,6 +183,8 @@ void NavTelemetrySerialNode::loadParameters()
   serial_config_.baud_rate = get_parameter("baud_rate").as_int();
   ack_timeout_ms_ = get_parameter("ack_timeout_ms").as_int();
   reconnect_period_ms_ = get_parameter("reconnect_period_ms").as_int();
+  continuous_send_enabled_ = get_parameter("continuous_send_enabled").as_bool();
+  continuous_send_period_ms_ = get_parameter("continuous_send_period_ms").as_int();
   write_newline_ = get_parameter("write_newline").as_bool();
   send_shutdown_arrival_on_exit_ = get_parameter("send_shutdown_arrival_on_exit").as_bool();
   shutdown_arrival_repeat_count_ = get_parameter("shutdown_arrival_repeat_count").as_int();
@@ -182,6 +199,13 @@ void NavTelemetrySerialNode::loadParameters()
   if (reconnect_period_ms_ <= 0) {
     RCLCPP_WARN(get_logger(), "Invalid reconnect_period_ms=%d, fallback to 1000", reconnect_period_ms_);
     reconnect_period_ms_ = 1000;
+  }
+  if (continuous_send_period_ms_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid continuous_send_period_ms=%d, fallback to 100",
+      continuous_send_period_ms_);
+    continuous_send_period_ms_ = 100;
   }
   if (shutdown_arrival_repeat_count_ <= 0) {
     RCLCPP_WARN(
@@ -304,6 +328,82 @@ void NavTelemetrySerialNode::publishGoal(const geometry_msgs::msg::PoseStamped &
   }
 }
 
+void NavTelemetrySerialNode::continuousSendTimerCallback()
+{
+  PoseCache current;
+  PoseCache goal;
+  if (!getContinuousTelemetrySnapshot(current, goal)) {
+    return;
+  }
+
+  const auto frame = appendConfiguredNewline(buildFrame(now(), current, goal, "continuous"));
+  std::string detail;
+  if (!writeFrame(frame, "nav_telemetry_continuous_tx", detail)) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      2000,
+      "nav_telemetry_continuous_tx_failed detail=%s",
+      detail.c_str());
+  }
+}
+
+void NavTelemetrySerialNode::updateLastGoalPose(const PoseCache & goal)
+{
+  std::lock_guard<std::mutex> lock(pose_mutex_);
+  last_goal_pose_ = goal;
+}
+
+bool NavTelemetrySerialNode::getContinuousTelemetrySnapshot(PoseCache & current, PoseCache & goal) const
+{
+  std::lock_guard<std::mutex> lock(pose_mutex_);
+  if (!current_pose_.valid || !last_goal_pose_.valid) {
+    return false;
+  }
+  current = current_pose_;
+  goal = last_goal_pose_;
+  return true;
+}
+
+bool NavTelemetrySerialNode::writeFrame(
+  const std::string & frame,
+  const char * log_prefix,
+  std::string & detail)
+{
+  std::lock_guard<std::mutex> write_lock(write_mutex_);
+  if (!isSerialReady() && !maybeReconnect()) {
+    detail = "serial_not_ready";
+    return false;
+  }
+
+  std::shared_ptr<SerialConnection> serial_connection;
+  {
+    std::lock_guard<std::mutex> lock(serial_mutex_);
+    if (!serial_ready_ || !serial_connection_) {
+      detail = "serial_not_ready";
+      return false;
+    }
+    serial_connection = serial_connection_;
+  }
+
+  RCLCPP_INFO(
+    get_logger(),
+    "%s port=%s data=%s",
+    log_prefix,
+    serial_config_.port.c_str(),
+    escapeSerialPayload(frame).c_str());
+
+  std::string error;
+  if (!serial_connection->write(frame, error)) {
+    detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
+    markSerialNotReady(detail);
+    return false;
+  }
+
+  detail.clear();
+  return true;
+}
+
 rclcpp_action::GoalResponse NavTelemetrySerialNode::handleGoal(
   const rclcpp_action::GoalUUID & uuid,
   std::shared_ptr<const NavigateWaypoint::Goal> goal)
@@ -355,52 +455,19 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
     current = current_pose_;
   }
 
-  if (!isSerialReady() && !maybeReconnect()) {
-    releaseGoalSlot();
-    auto result = std::make_shared<NavigateWaypoint::Result>();
-    result->accepted = false;
-    result->detail = "serial_not_ready";
-    goal_handle->abort(result);
-    return;
-  }
-
   const auto frame = appendConfiguredNewline(buildFrame(now(), current, goal));
-  std::shared_ptr<SerialConnection> serial_connection;
-  {
-    std::lock_guard<std::mutex> lock(serial_mutex_);
-    if (!serial_ready_ || !serial_connection_) {
-      releaseGoalSlot();
-      auto result = std::make_shared<NavigateWaypoint::Result>();
-      result->accepted = false;
-      result->detail = "serial_not_ready";
-      goal_handle->abort(result);
-      return;
-    }
-    serial_connection = serial_connection_;
-  }
-
   std::string error;
-  RCLCPP_INFO(
-    get_logger(),
-    "nav_telemetry_serial_tx port=%s data=%s",
-    serial_config_.port.c_str(),
-    escapeSerialPayload(frame).c_str());
-  if (!serial_connection->write(frame, error)) {
-    const auto detail = error.empty() ? "serial_write_error" : "serial_write_error:" + error;
-    RCLCPP_ERROR(get_logger(), "nav_goal_write_failed detail=%s", detail.c_str());
-    markSerialNotReady(detail);
+  if (!writeFrame(frame, "nav_telemetry_serial_tx", error)) {
+    RCLCPP_ERROR(get_logger(), "nav_goal_write_failed detail=%s", error.c_str());
     releaseGoalSlot();
     auto result = std::make_shared<NavigateWaypoint::Result>();
     result->accepted = false;
-    result->detail = detail;
+    result->detail = error;
     goal_handle->abort(result);
     return;
   }
 
-  if (send_shutdown_arrival_on_exit_) {
-    std::lock_guard<std::mutex> lock(pose_mutex_);
-    last_goal_pose_ = goal;
-  }
+  updateLastGoalPose(goal);
 
   feedback->progress = 0.5F;
   feedback->state = "waiting_arrival";
@@ -529,6 +596,8 @@ bool NavTelemetrySerialNode::sendCurrentPoseStopFrames(
     return false;
   }
 
+  updateLastGoalPose(current);
+
   bool any_sent = false;
   for (int attempt = 1; attempt <= repeat_count; ++attempt) {
     const auto frame = appendConfiguredNewline(buildFrame(now(), current, current, event));
@@ -541,22 +610,25 @@ bool NavTelemetrySerialNode::sendCurrentPoseStopFrames(
       attempt,
       repeat_count,
       escapeSerialPayload(frame).c_str());
-    if (!serial->write(frame, error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "%s_tx_failed attempt=%d/%d detail=%s",
-        log_prefix,
-        attempt,
-        repeat_count,
-        error.empty() ? "write_error" : error.c_str());
-    } else {
-      any_sent = true;
-      RCLCPP_INFO(
-        get_logger(),
-        "%s_tx_done attempt=%d/%d",
-        log_prefix,
-        attempt,
-        repeat_count);
+    {
+      std::lock_guard<std::mutex> write_lock(write_mutex_);
+      if (!serial->write(frame, error)) {
+        RCLCPP_WARN(
+          get_logger(),
+          "%s_tx_failed attempt=%d/%d detail=%s",
+          log_prefix,
+          attempt,
+          repeat_count,
+          error.empty() ? "write_error" : error.c_str());
+      } else {
+        any_sent = true;
+        RCLCPP_INFO(
+          get_logger(),
+          "%s_tx_done attempt=%d/%d",
+          log_prefix,
+          attempt,
+          repeat_count);
+      }
     }
 
     if (timeout_stop_interval_ms_ > 0 && attempt < repeat_count) {

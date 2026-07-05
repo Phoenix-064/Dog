@@ -126,6 +126,12 @@ def generate_launch_description() -> LaunchDescription:
     nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
     nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
     nav_telemetry_ack_timeout_ms = LaunchConfiguration("nav_telemetry_ack_timeout_ms")
+    nav_telemetry_continuous_send_enabled = LaunchConfiguration(
+        "nav_telemetry_continuous_send_enabled"
+    )
+    nav_telemetry_continuous_send_period_ms = LaunchConfiguration(
+        "nav_telemetry_continuous_send_period_ms"
+    )
     nav_telemetry_read_line_delimiter = LaunchConfiguration("nav_telemetry_read_line_delimiter")
     nav_telemetry_shutdown_arrival_repeat_count = LaunchConfiguration(
         "nav_telemetry_shutdown_arrival_repeat_count"
@@ -249,6 +255,18 @@ def generate_launch_description() -> LaunchDescription:
         description="Navigation arrival acknowledgement timeout in milliseconds.",
     )
 
+    declare_nav_telemetry_continuous_send_enabled = DeclareLaunchArgument(
+        "nav_telemetry_continuous_send_enabled",
+        default_value="true",
+        description="Whether to continuously send latest pose and goal over navigation serial.",
+    )
+
+    declare_nav_telemetry_continuous_send_period_ms = DeclareLaunchArgument(
+        "nav_telemetry_continuous_send_period_ms",
+        default_value="100",
+        description="Continuous navigation telemetry send period in milliseconds.",
+    )
+
     declare_nav_telemetry_read_line_delimiter = DeclareLaunchArgument(
         "nav_telemetry_read_line_delimiter",
         default_value="\\n",
@@ -370,6 +388,14 @@ def generate_launch_description() -> LaunchDescription:
             "serial_port": nav_telemetry_serial_port,
             "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
             "ack_timeout_ms": ParameterValue(nav_telemetry_ack_timeout_ms, value_type=int),
+            "continuous_send_enabled": ParameterValue(
+                nav_telemetry_continuous_send_enabled,
+                value_type=bool,
+            ),
+            "continuous_send_period_ms": ParameterValue(
+                nav_telemetry_continuous_send_period_ms,
+                value_type=int,
+            ),
             "read_line_delimiter": nav_telemetry_read_line_delimiter,
             "send_shutdown_arrival_on_exit": ParameterValue(
                 PythonExpression(["'", test_mode, "' == 'true'"]),
@@ -434,6 +460,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_nav_telemetry_serial_port,
         declare_nav_telemetry_baud_rate,
         declare_nav_telemetry_ack_timeout_ms,
+        declare_nav_telemetry_continuous_send_enabled,
+        declare_nav_telemetry_continuous_send_period_ms,
         declare_nav_telemetry_read_line_delimiter,
         declare_nav_telemetry_shutdown_arrival_repeat_count,
         declare_nav_telemetry_timeout_stop_repeat_count,

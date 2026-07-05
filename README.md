@@ -85,6 +85,8 @@ ros2 run dog_behavior dog_behavior_bt_node
 - nav_telemetry_serial_port（默认 /dev/ttyUSB1）：目标点导航串口
 - nav_telemetry_baud_rate（默认 115200）：目标点导航串口波特率
 - nav_telemetry_ack_timeout_ms（默认 10000）：等待 `RCArrivalMX` 到达回包的超时
+- nav_telemetry_continuous_send_enabled（默认 true）：收到有效导航目标后是否持续发送最新定位与目标
+- nav_telemetry_continuous_send_period_ms（默认 100）：持续发送 `RCNAV` 的周期，单位毫秒
 - match_type（默认 left，可选 left/right）：比赛类型，决定加载哪组导航坐标文件
 
 示例：
@@ -173,6 +175,7 @@ ros2 topic echo --once /behavior/test_visualization/markers
 - `nav_telemetry_serial_ready port=/dev/ttyUSB...`：串口设备已打开。
 - `behavior_name=auto_start`：行为树已自动启动。
 - `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米，`goal_yaw` 单位为角度。
+- `nav_telemetry_continuous_tx ... RCNAV;...cur_x=...;cur_y=...;goal_x=...;goal_y=...`：收到有效目标后，上位机正在按周期持续发送最新定位与目标。
 - `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时出现 `nav_serial_line_unmatched` 或最终 `arrival_timeout` 不代表串口通讯失败。
 
 ## 6. 项目结构与职责
