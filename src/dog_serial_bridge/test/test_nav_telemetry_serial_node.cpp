@@ -6,6 +6,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -154,13 +155,20 @@ struct ActionCallState
   std::vector<std::string> feedback_states;
 };
 
-geometry_msgs::msg::PoseStamped makePose(const std::string & frame_id, const double x, const double y)
+geometry_msgs::msg::PoseStamped makePose(
+  const std::string & frame_id,
+  const double x,
+  const double y,
+  const double yaw_deg = 0.0)
 {
+  constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
+  const double yaw_rad = yaw_deg * kDegreesToRadians;
   geometry_msgs::msg::PoseStamped pose;
   pose.header.frame_id = frame_id;
   pose.pose.position.x = x;
   pose.pose.position.y = y;
-  pose.pose.orientation.w = 1.0;
+  pose.pose.orientation.z = std::sin(yaw_rad / 2.0);
+  pose.pose.orientation.w = std::cos(yaw_rad / 2.0);
   return pose;
 }
 
@@ -272,11 +280,11 @@ TEST_F(NavTelemetrySerialNodeTest, NavigateGoalWritesFrameAndSucceedsOnArrival)
     return client->wait_for_action_server(std::chrono::seconds(0));
   }));
 
-  current_pub->publish(makePose("map", 1.23, 0.42));
+  current_pub->publish(makePose("map", 1.23, 0.42, 45.0));
   executor.spin_some();
 
   NavigateWaypoint::Goal goal;
-  goal.target_pose = makePose("map", 3.0, 2.0);
+  goal.target_pose = makePose("map", 3.0, 2.0, 90.0);
 
   ActionCallState state;
   auto goal_handle = sendGoal(executor, client, goal, state);
@@ -290,9 +298,11 @@ TEST_F(NavTelemetrySerialNodeTest, NavigateGoalWritesFrameAndSucceedsOnArrival)
   EXPECT_NE(frame.find(";cur_valid=1;"), std::string::npos);
   EXPECT_NE(frame.find(";cur_frame=map;"), std::string::npos);
   EXPECT_NE(frame.find(";cur_x=123.000;cur_y=42.000;"), std::string::npos);
+  EXPECT_NE(frame.find(";cur_yaw=45.000;"), std::string::npos);
   EXPECT_NE(frame.find(";goal_valid=1;"), std::string::npos);
   EXPECT_NE(frame.find(";goal_frame=map;"), std::string::npos);
   EXPECT_NE(frame.find(";goal_x=300.000;goal_y=200.000;"), std::string::npos);
+  EXPECT_NE(frame.find(";goal_yaw=90.000"), std::string::npos);
   EXPECT_EQ(frame.back(), '\n');
 
   fake_serial->enqueueIncomingLine("RCArrivalMX\n");
@@ -346,7 +356,7 @@ TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameAfterGoal)
     "/test/nav/current_pose",
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
 
-  geometry_msgs::msg::PoseStamped current_pose = makePose("camera_init", -0.26969, -0.08705);
+  geometry_msgs::msg::PoseStamped current_pose = makePose("camera_init", -0.26969, -0.08705, -30.0);
   current_pub->publish(current_pose);
   for (int i = 0; i < 50; ++i) {
     executor.spin_some();
@@ -364,6 +374,8 @@ TEST_F(NavTelemetrySerialNodeTest, SendShutdownArrivalFrameAfterGoal)
   EXPECT_NE(shutdown_frame.find("RCNAV;seq="), std::string::npos);
   EXPECT_NE(shutdown_frame.find(";event=shutdown_arrived;"), std::string::npos);
   EXPECT_NE(shutdown_frame.find(";goal_x=-26.969;goal_y=-8.705;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";cur_yaw=-30.000;"), std::string::npos);
+  EXPECT_NE(shutdown_frame.find(";goal_yaw=-30.000"), std::string::npos);
   EXPECT_NE(shutdown_frame.find(";goal_frame=camera_init;"), std::string::npos);
   EXPECT_EQ(shutdown_frame.back(), '\n');
 

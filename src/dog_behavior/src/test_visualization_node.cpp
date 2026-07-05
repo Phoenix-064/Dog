@@ -21,11 +21,12 @@ double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q)
   return std::atan2(siny_cosp, cosy_cosp);
 }
 
-geometry_msgs::msg::Quaternion quaternionFromYaw(const double yaw)
+geometry_msgs::msg::Quaternion quaternionFromYawDegrees(const double yaw_deg)
 {
+  const double yaw_rad = degreesToRadians(yaw_deg);
   geometry_msgs::msg::Quaternion q;
-  q.z = std::sin(yaw / 2.0);
-  q.w = std::cos(yaw / 2.0);
+  q.z = std::sin(yaw_rad / 2.0);
+  q.w = std::cos(yaw_rad / 2.0);
   return q;
 }
 
@@ -159,7 +160,7 @@ void TestVisualizationNode::loadWaypoints(const std::string & file_path)
       wp.x = wp_node["x"].as<double>(0.0);
       wp.y = wp_node["y"].as<double>(0.0);
       wp.z = wp_node["z"].as<double>(0.0);
-      wp.yaw = wp_node["yaw"].as<double>(0.0);
+      wp.yaw_deg = wp_node["yaw"].as<double>(0.0);
       waypoints_.push_back(wp);
     }
   } catch (const std::exception & e) {
@@ -229,7 +230,7 @@ nav_msgs::msg::Path TestVisualizationNode::buildRoutePath(const rclcpp::Time & s
     pose.pose.position.x = wp.x;
     pose.pose.position.y = wp.y;
     pose.pose.position.z = wp.z;
-    pose.pose.orientation = quaternionFromYaw(wp.yaw);
+    pose.pose.orientation = quaternionFromYawDegrees(wp.yaw_deg);
     path.poses.push_back(pose);
   }
   return path;
@@ -350,7 +351,8 @@ visualization_msgs::msg::MarkerArray TestVisualizationNode::buildMarkers(
   status.color = stateColor(nav_state_);
   status.text = "nav_state: " + nav_state_;
   if (has_goal_) {
-    status.text += "\ngoal_yaw: " + std::to_string(yawFromQuaternion(current_goal_.pose.orientation));
+    status.text += "\ngoal_yaw_deg: " +
+      std::to_string(radiansToDegrees(yawFromQuaternion(current_goal_.pose.orientation)));
   }
   array.markers.push_back(status);
 

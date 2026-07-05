@@ -18,6 +18,7 @@ namespace
 {
 
 constexpr double kMetersToCentimeters = 100.0;
+constexpr double kRadiansToDegrees = 180.0 / 3.14159265358979323846;
 constexpr char kArrivalReply[] = "RCArrivalMX";
 
 std::string trimLine(std::string line)
@@ -122,7 +123,7 @@ void appendPoseFields(
   stream << ';' << prefix << "_x=" << cache.pose.pose.position.x * kMetersToCentimeters
          << ';' << prefix << "_y=" << cache.pose.pose.position.y * kMetersToCentimeters
          << ';' << prefix << "_z=" << cache.pose.pose.position.z * kMetersToCentimeters
-         << ';' << prefix << "_yaw=" << yawFromPose(cache.pose.pose);
+         << ';' << prefix << "_yaw=" << yawFromPose(cache.pose.pose) * kRadiansToDegrees;
 }
 
 }  // namespace

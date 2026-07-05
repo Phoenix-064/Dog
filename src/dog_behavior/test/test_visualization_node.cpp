@@ -8,6 +8,7 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -47,8 +48,15 @@ std::string writeWaypointFile()
       << "    x: 3.0\n"
       << "    y: 4.0\n"
       << "    z: 0.0\n"
-      << "    yaw: 1.57\n";
+      << "    yaw: 90.0\n";
   return path;
+}
+
+double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q)
+{
+  const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+  const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+  return std::atan2(siny_cosp, cosy_cosp);
 }
 
 bool markerTextContains(
@@ -171,6 +179,10 @@ TEST_F(TestVisualizationNodeTest, PublishesRouteMarkersGoalAndState)
   EXPECT_EQ(viz_node->NavStateForTest(), "running");
   ASSERT_EQ(route_msg->poses.size(), 2u);
   EXPECT_EQ(route_msg->header.frame_id, "map");
+  EXPECT_NEAR(
+    yawFromQuaternion(route_msg->poses.at(1).pose.orientation),
+    dog_behavior::kPi / 2.0,
+    1.0e-6);
   EXPECT_TRUE(markerTextContains(*marker_msg, "alpha"));
   EXPECT_TRUE(markerTextContains(*marker_msg, "beta"));
   EXPECT_TRUE(markerTextContains(*marker_msg, "nav_state: running"));

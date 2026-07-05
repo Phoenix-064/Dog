@@ -316,11 +316,11 @@ RCNAV;seq=1;stamp_ms=1710000000123;cur_valid=1;cur_frame=map;cur_x=123.000;cur_y
 | `cur_valid` | 是否已有合法当前位置 |
 | `cur_frame` | 当前位置 frame id，非法字符会替换为 `_` |
 | `cur_x/cur_y/cur_z` | 当前三维位置，串口发送单位为厘米；ROS 内部 `PoseStamped` 仍为米，发送前乘以 100 |
-| `cur_yaw` | 当前 yaw，单位弧度 |
+| `cur_yaw` | 当前 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度发送 |
 | `goal_valid` | 是否已有合法导航目标 |
 | `goal_frame` | 目标 frame id，非法字符会替换为 `_` |
 | `goal_x/goal_y/goal_z` | 目标三维位置，串口发送单位为厘米；ROS 内部 `PoseStamped` 仍为米，发送前乘以 100 |
-| `goal_yaw` | 目标 yaw，单位弧度 |
+| `goal_yaw` | 目标 yaw，单位角度；ROS 内部四元数反解后由弧度转换为角度发送 |
 
 回包映射：
 

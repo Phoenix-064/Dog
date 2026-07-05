@@ -175,7 +175,7 @@ ros2 topic echo --once /behavior/test_visualization/markers
 
 - `nav_telemetry_serial_ready port=/dev/ttyUSB...`：串口设备已打开。
 - `behavior_name=auto_start`：行为树已自动启动。
-- `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米。
+- `nav_telemetry_serial_tx ... RCNAV;...goal_x=...;goal_y=...;goal_yaw=...`：实际航点目标已经通过串口发送；`goal_x/goal_y/goal_z` 单位为厘米，`goal_yaw` 单位为角度。
 - `nav_telemetry_serial_rx ...`：收到下位机串口回传。若下位机当前烧录测试程序，回传内容可能不是 `RCArrivalMX`，此时出现 `nav_serial_line_unmatched` 或最终 `arrival_timeout` 不代表串口通讯失败。
 
 ## 6. 项目结构与职责

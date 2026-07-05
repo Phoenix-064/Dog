@@ -347,7 +347,7 @@ Topic：
 1. `PlaceRuleAction` 使用 `group_a={0,1,5,4}`、`group_b={2,3,7,6}`。
 2. `counter` 在 `[0,7]` 内按 `match_type` 映射目标箱类型；超出范围输出空目标。
 3. `ExecutePlaceBoxesAction` 在主树中采用 fail-open（由 `ForceSuccess` 包裹）；放置 action 失败不会让整棵树失败，但只有 action 成功且 `accepted=true` 时才提交对应箱型计数。
-4. waypoint YAML 中的 `yaw` 被代码按弧度转换为四元数，没有角度到弧度转换。
+4. waypoint YAML 中的 `yaw` 统一为角度制；代码在构造 ROS 四元数前转换为弧度。
 
 ---
 
@@ -376,7 +376,7 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 1. 已使用 CH340 `/dev/ttyUSB0` 验证 `behavior_tree_nav_serial_test.xml` 可通过真实测试程序发送航点。
 2. 启动后行为树自动开始执行（`auto_start=true`），日志出现 `BT tick completed` 与 `nav_telemetry_serial_tx ... RCNAV;...`。
-3. 左侧航点文件中 `waypoint_goal_1` 当前为 `x=0.0, y=1.0, yaw=1.57`，串口帧对应 `goal_x=0.000;goal_y=100.000;goal_yaw=1.570`；`goal_y` 为厘米单位。
+3. 左侧航点文件中 `waypoint_goal_1` 当前为 `x=0.0, y=1.0, yaw=0`，串口帧对应 `goal_x=0.000;goal_y=100.000;goal_yaw=0.000`；`goal_y` 为厘米单位，`goal_yaw` 为角度单位。
 4. 下位机测试固件返回的 `0`、`1,0,0`、`0,-1,0` 等非协议行会被记录为 `nav_telemetry_serial_rx`，并因不是 `RCArrivalMX` 产生 `nav_serial_line_unmatched`。该现象只说明测试固件未返回正式到达帧，不表示串口发送失败。
 
 ---

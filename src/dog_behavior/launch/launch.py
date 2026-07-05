@@ -132,6 +132,15 @@ def generate_launch_description() -> LaunchDescription:
     map_to_camera_roll = LaunchConfiguration("map_to_camera_roll")
     map_to_camera_pitch = LaunchConfiguration("map_to_camera_pitch")
     map_to_camera_yaw = LaunchConfiguration("map_to_camera_yaw")
+    map_to_camera_roll_rad = PythonExpression([
+        "float('", map_to_camera_roll, "') * 0.017453292519943295",
+    ])
+    map_to_camera_pitch_rad = PythonExpression([
+        "float('", map_to_camera_pitch, "') * 0.017453292519943295",
+    ])
+    map_to_camera_yaw_rad = PythonExpression([
+        "float('", map_to_camera_yaw, "') * 0.017453292519943295",
+    ])
 
     declare_test_mode = DeclareLaunchArgument(
         "test_mode",
@@ -251,19 +260,19 @@ def generate_launch_description() -> LaunchDescription:
     declare_map_to_camera_roll = DeclareLaunchArgument(
         "map_to_camera_roll",
         default_value="0.0",
-        description="Static TF map->camera_init roll (rad).",
+        description="Static TF map->camera_init roll (deg).",
     )
 
     declare_map_to_camera_pitch = DeclareLaunchArgument(
         "map_to_camera_pitch",
         default_value="0.0",
-        description="Static TF map->camera_init pitch (rad).",
+        description="Static TF map->camera_init pitch (deg).",
     )
 
     declare_map_to_camera_yaw = DeclareLaunchArgument(
         "map_to_camera_yaw",
         default_value="0.0",
-        description="Static TF map->camera_init yaw (rad).",
+        description="Static TF map->camera_init yaw (deg).",
     )
 
     declare_match_type = DeclareLaunchArgument(
@@ -354,13 +363,21 @@ def generate_launch_description() -> LaunchDescription:
         name="map_to_camera_init_static_tf",
         output="screen",
         arguments=[
+            "--x",
             map_to_camera_x,
+            "--y",
             map_to_camera_y,
+            "--z",
             map_to_camera_z,
-            map_to_camera_roll,
-            map_to_camera_pitch,
-            map_to_camera_yaw,
+            "--roll",
+            map_to_camera_roll_rad,
+            "--pitch",
+            map_to_camera_pitch_rad,
+            "--yaw",
+            map_to_camera_yaw_rad,
+            "--frame-id",
             "map",
+            "--child-frame-id",
             "camera_init",
         ],
     )

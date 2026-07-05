@@ -60,8 +60,9 @@ geometry_msgs::msg::PoseStamped SelectWaypointAction::waypointToPose(
   pose.pose.position.z = waypoint.z;
   pose.pose.orientation.x = 0.0;
   pose.pose.orientation.y = 0.0;
-  pose.pose.orientation.z = std::sin(waypoint.yaw / 2.0);
-  pose.pose.orientation.w = std::cos(waypoint.yaw / 2.0);
+  const double yaw_rad = degreesToRadians(waypoint.yaw_deg);
+  pose.pose.orientation.z = std::sin(yaw_rad / 2.0);
+  pose.pose.orientation.w = std::cos(yaw_rad / 2.0);
   return pose;
 }
 

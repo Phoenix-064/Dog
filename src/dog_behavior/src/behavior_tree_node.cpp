@@ -60,8 +60,9 @@ geometry_msgs::msg::PoseStamped waypointToPose(const Waypoint & waypoint, const 
   pose.pose.position.z = waypoint.z;
   pose.pose.orientation.x = 0.0;
   pose.pose.orientation.y = 0.0;
-  pose.pose.orientation.z = std::sin(waypoint.yaw / 2.0);
-  pose.pose.orientation.w = std::cos(waypoint.yaw / 2.0);
+  const double yaw_rad = degreesToRadians(waypoint.yaw_deg);
+  pose.pose.orientation.z = std::sin(yaw_rad / 2.0);
+  pose.pose.orientation.w = std::cos(yaw_rad / 2.0);
   return pose;
 }
 
@@ -335,7 +336,7 @@ void BehaviorTreeNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPt
 
   RCLCPP_DEBUG(
     get_logger(),
-    "point_lio_pose topic_frame=%s publish_frame=%s stamp=%d.%u position=(%.3f, %.3f, %.3f) yaw=%.3f orientation=(%.6f, %.6f, %.6f, %.6f) linear=(%.3f, %.3f, %.3f) angular=(%.3f, %.3f, %.3f)",
+    "point_lio_pose topic_frame=%s publish_frame=%s stamp=%d.%u position=(%.3f, %.3f, %.3f) yaw_deg=%.3f orientation=(%.6f, %.6f, %.6f, %.6f) linear=(%.3f, %.3f, %.3f) angular=(%.3f, %.3f, %.3f)",
     msg->header.frame_id.c_str(),
     pose_msg.header.frame_id.c_str(),
     msg->header.stamp.sec,
@@ -343,7 +344,7 @@ void BehaviorTreeNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPt
     pose_msg.pose.position.x,
     pose_msg.pose.position.y,
     pose_msg.pose.position.z,
-    yawFromQuaternion(pose_msg.pose.orientation),
+    radiansToDegrees(yawFromQuaternion(pose_msg.pose.orientation)),
     pose_msg.pose.orientation.x,
     pose_msg.pose.orientation.y,
     pose_msg.pose.orientation.z,
@@ -410,7 +411,7 @@ void BehaviorTreeNode::loadWaypoints(const std::string & file_path)
       wp.x = wp_node["x"].as<double>(0.0);
       wp.y = wp_node["y"].as<double>(0.0);
       wp.z = wp_node["z"].as<double>(0.0);
-      wp.yaw = wp_node["yaw"].as<double>(0.0);
+      wp.yaw_deg = wp_node["yaw"].as<double>(0.0);
       waypoints_.push_back(wp);
     }
 

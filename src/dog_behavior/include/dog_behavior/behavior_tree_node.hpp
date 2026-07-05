@@ -13,13 +13,25 @@
 namespace dog_behavior
 {
 
+constexpr double kPi = 3.14159265358979323846;
+
+inline double degreesToRadians(const double degrees)
+{
+  return degrees * kPi / 180.0;
+}
+
+inline double radiansToDegrees(const double radians)
+{
+  return radians * 180.0 / kPi;
+}
+
 struct Waypoint
 {
   std::string name;
   double x;
   double y;
   double z;
-  double yaw;
+  double yaw_deg;
 };
 
 class BehaviorTreeNode : public rclcpp::Node
