@@ -1,6 +1,6 @@
 # dog_interfaces AI 开发查询文档
 
-本文档描述 `src/dog_interfaces` 的共享 ROS 接口契约。该包不包含运行节点，接口变更会影响 `dog_perception`、`dog_lifecycle`、`dog_behavior` 与 `dog_serial_bridge`，修改后必须优先构建 `dog_interfaces`。
+本文档描述 `src/dog_interfaces` 的共享 ROS 接口契约。该包不包含运行节点，接口变更会影响 `dog_perception`、`dog_behavior` 与 `dog_serial_bridge`，修改后必须优先构建 `dog_interfaces`。
 
 ## 1. 包定位
 
@@ -35,7 +35,7 @@
 1. 箱体检测输出时，`target_id` 通常为 `food/tool/instrument/medical/no_box`。
 2. 箱体检测输出的 `position.x/y` 是归一化图像框中心，`position.z` 是归一化面积，不是世界坐标。
 3. solver 或外推输出时，`target_id` 可为 `synced_target`、`extrapolated_target` 等，此时 `position` 更接近 3D 位姿语义。
-4. lifecycle 健康心跳只把 `confidence > 0` 且位置有限的目标视为有效帧；`no_box`、`no_feature`、`idle_spinning` 不算健康心跳。
+4. `no_box`、`no_feature` 等低置信目标仍可作为业务占位输出，但不应被上层误判为可抓取实体。
 
 ### 2.2 Target3DArray
 
@@ -48,7 +48,7 @@
 
 主要链路：
 
-1. `/target/target_3d`：`dog_perception` 发布，`dog_lifecycle` 作为有效帧心跳源，`dog_behavior` 的 `SetBoxesTypeAction` 用于箱型排序。
+1. `/target/target_3d`：`dog_perception` 发布，`dog_behavior` 的 `SetBoxesTypeAction` 用于箱型排序。
 2. `/target/digit_result`：`dog_perception` 发布，`dog_behavior` 的 `PublishMathAnswerAction` 用于生成 `/math_answer`。
 
 ## 3. Service 契约

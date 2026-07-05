@@ -16,7 +16,7 @@
 
 `dog_serial_bridge` 是 `dog_behavior` 与下位机 MCU 串口协议之间的桥接层。它包含两类独立串口链路：
 
-1. 命令事务链路：保持上层行为包已使用的 Action 接口不变，将抓取/放置请求转换为 `RC...` 串口帧，并把下位机回包转换为 Action result 与 lifecycle 兼容抓取反馈。
+1. 命令事务链路：保持上层行为包已使用的 Action 接口不变，将抓取/放置请求转换为 `RC...` 串口帧，并把下位机回包转换为 Action result。
 2. 目标点导航链路：独立串口接收 `/behavior/nav_execute` Action goal，将目标位姿转换为 `RCNAV...` 串口帧，并等待 MCU 固定回包 `RCArrivalMX` 确认到达。
 
 核心文件：
@@ -48,11 +48,10 @@
 
 ## 2. 运行时职责概览
 
-`SerialBridgeNode` 在运行时承担三条主线：
+`SerialBridgeNode` 在运行时承担两条主线：
 
 1. 抓取动作桥接：接收 `/behavior/execute` 的 `PickUpBoxes` goal，发送 `RCPickUpBoxes`，等待抓取成功或失败回包。
 2. 放置动作桥接：接收 `/behavior/place_boxes` 的 `place=...,count=...` payload，发送 `RC` + payload，等待 `RCOK` 回包。
-3. lifecycle 兼容反馈：抓取成功或空抓时发布 `/behavior/grasp_feedback`，格式为 `pickup_<seq>|success` 或 `pickup_<seq>|empty_grasp`。
 
 `NavTelemetrySerialNode` 在运行时承担一条独立目标点导航链路：
 
@@ -74,8 +73,6 @@ flowchart TD
   G --> F
   F --> E
   E --> H[Action Result]
-  E --> I[/behavior/grasp_feedback]
-  I --> J[dog_lifecycle]
   K[dog_behavior BT Action Client] --> L[/behavior/nav_execute]
   M[/dog/global_pose] --> N[NavTelemetrySerialNode]
   L --> N
@@ -110,14 +107,6 @@ flowchart TD
 4. `NavTelemetrySerialNode` 独立使用导航串口，同一时刻只允许一个 in-flight navigation goal；忙时新 goal 直接 `REJECT`。
 
 ### 3.2 Topic Publisher
-
-`SerialBridgeNode` 发布：
-
-1. `/behavior/grasp_feedback`：类型为 `std_msgs/msg/String`
-2. 成功抓取：`pickup_<seq>|success`
-3. 空抓失败：`pickup_<seq>|empty_grasp`
-
-该 topic 由 `dog_lifecycle` 消费，用于空抓熔断与生命周期降级逻辑。
 
 `NavTelemetrySerialNode` 发布：
 
@@ -186,11 +175,10 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 ### 4.0.1 字符串协议分层
 
-本包同时涉及三类字符串格式，不能混用：
+本包同时涉及两类字符串格式，不能混用：
 
 1. ROS 节点间通用 payload：多数字段使用分号分隔 `key=value;key=value`，由 `dog_behavior::utils::parseKeyValuePayload()` 解析。
 2. `PlaceBoxes.goal.payload`：当前格式为 `place=0,3,count=3`，由 `dog_serial_bridge::parsePlacePayload()` 解析，不是分号协议。
-3. `/behavior/grasp_feedback`：当前格式为 `pickup_<seq>|success` 或 `pickup_<seq>|empty_grasp`，由 lifecycle 兼容解析逻辑消费。
 
 ### 4.0 标准帧格式
 
@@ -239,12 +227,12 @@ RCPickUpBoxes\n
 
 回包映射：
 
-| MCU 回包 | Action 状态 | Result 字段 | lifecycle 反馈 |
-| --- | --- | --- | --- |
-| `RCPickSuccess` | `succeed` | `accepted=true`, `detail=pick_success` | `pickup_<seq>|success` |
-| `RCPickFail` | `succeed` | `accepted=false`, `detail=pick_fail` | `pickup_<seq>|empty_grasp` |
-| 超时 | `abort` | `accepted=false`, `detail=ack_timeout` | 不发布 |
-| 串口错误 | `abort` | `accepted=false`, `detail=serial_*` | 不发布 |
+| MCU 回包 | Action 状态 | Result 字段 |
+| --- | --- | --- |
+| `RCPickSuccess` | `succeed` | `accepted=true`, `detail=pick_success` |
+| `RCPickFail` | `succeed` | `accepted=false`, `detail=pick_fail` |
+| 超时 | `abort` | `accepted=false`, `detail=ack_timeout` |
+| 串口错误 | `abort` | `accepted=false`, `detail=serial_*` |
 
 Action feedback 心跳：
 
@@ -368,11 +356,10 @@ state = waiting_arrival
 
 1. main 创建 `SerialBridgeNode` 并 spin：[src/dog_serial_bridge/src/main.cpp#L7](../src/dog_serial_bridge/src/main.cpp#L7)
 2. 构造函数声明并读取参数：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L25](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L25)
-3. 创建 `/behavior/grasp_feedback` publisher：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L35](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L35)
-4. 创建 `/behavior/execute` Action Server：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L45](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L45)
-5. 创建 `/behavior/place_boxes` Action Server：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L52](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L52)
-6. 创建周期 feedback timer：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L59](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L59)
-7. 打开串口并启动 reader thread：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L115](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L115)
+3. 创建 `/behavior/execute` Action Server：[src/dog_serial_bridge/src/serial_bridge_node.cpp](../src/dog_serial_bridge/src/serial_bridge_node.cpp)
+4. 创建 `/behavior/place_boxes` Action Server：[src/dog_serial_bridge/src/serial_bridge_node.cpp](../src/dog_serial_bridge/src/serial_bridge_node.cpp)
+5. 创建周期 feedback timer：[src/dog_serial_bridge/src/serial_bridge_node.cpp](../src/dog_serial_bridge/src/serial_bridge_node.cpp)
+6. 打开串口并启动 reader thread：[src/dog_serial_bridge/src/serial_bridge_node.cpp](../src/dog_serial_bridge/src/serial_bridge_node.cpp)
 
 目标点导航入口链路：
 
@@ -386,7 +373,7 @@ state = waiting_arrival
 flowchart TD
   A[main] --> B[SerialBridgeNode constructor]
   B --> C[declare/load parameters]
-  C --> D[create publisher + action servers + feedback timer]
+  C --> D[create action servers + feedback timer]
   D --> E[initializeSerial]
   E -->|open success| F[startReaderThread]
   E -->|open failed| G[serial_ready=false]
@@ -401,7 +388,7 @@ flowchart TD
 3. 开始抓取事务并记录 `pickup_sequence`：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L348](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L348)
 4. 写入 `RCPickUpBoxes` 串口帧：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L370](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L370)
 5. 等待事务结果：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L384](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L384)
-6. 成功/空抓时发布 lifecycle 反馈并完成 Action：[src/dog_serial_bridge/src/serial_bridge_node.cpp#L385](../src/dog_serial_bridge/src/serial_bridge_node.cpp#L385)
+6. 成功/空抓时完成 Action：[src/dog_serial_bridge/src/serial_bridge_node.cpp](../src/dog_serial_bridge/src/serial_bridge_node.cpp)
 
 ```mermaid
 flowchart TD
@@ -412,8 +399,8 @@ flowchart TD
   D -->|ok| E[executePickupGoal thread]
   E --> F[write RCPickUpBoxes]
   F --> G[waitForTransaction]
-  G -->|RCPickSuccess| H[succeed accepted=true + grasp_feedback success]
-  G -->|RCPickFail| I[succeed accepted=false + grasp_feedback empty_grasp]
+  G -->|RCPickSuccess| H[succeed accepted=true]
+  G -->|RCPickFail| I[succeed accepted=false]
   G -->|timeout/error| J[abort]
 ```
 
@@ -558,7 +545,7 @@ colcon test-result --all --verbose
 3. `test_nav_telemetry_serial_node`：3 个目标点导航串口测试。
 4. 覆盖抓取成功、空抓、超时、busy reject、unsupported reject、serial_not_ready abort。
 5. 覆盖放置成功、超时、busy reject、非法 payload reject、无关回包忽略。
-6. 覆盖 Action feedback 心跳与 lifecycle grasp feedback 发布。
+6. 覆盖 Action feedback 心跳。
 7. 覆盖目标点导航帧包含 current/goal pose、收到 `RCArrivalMX` 成功、超时失败、串口未就绪失败。
 8. 已完成 CH340 `/dev/ttyUSB0` 实机收发验证：行为树测试程序发送 `RCNAV`，下位机测试固件有串口回传；正式到达成功仍依赖 MCU 返回 `RCArrivalMX`。
 
@@ -574,13 +561,12 @@ CMake 测试注意事项：
 后续 AI 修改该包时建议遵守以下规则：
 
 1. 保持 `/behavior/execute`、`/behavior/place_boxes` Action 接口不变，避免破坏 `dog_behavior` 行为树叶子节点。
-2. 保持 `/behavior/grasp_feedback` 的 `task_id|type` 格式，避免破坏 `dog_lifecycle` 空抓熔断逻辑。
-3. 修改串口协议时，先更新 `serial_protocol.*` 与 `test_serial_protocol.cpp`，再更新 `SerialBridgeNode` 分发逻辑。
-4. 修改并发/超时逻辑时，重点检查 `reserveTransactionSlot()`、`begin*Transaction()`、`waitForTransaction()` 与 `feedbackTimerCallback()`。
-5. 修改真实串口实现时，保留 `SerialConnection` 抽象，确保测试仍可用 fake 串口无硬件运行。
-6. 增加新 MCU 回包时，必须明确其只对哪类 transaction 生效，避免不同 Action 互相误消费回包。
-7. 目标点导航链路应保持独立串口和单 goal 执行模型；不要把导航回包混入 `SerialBridgeNode` 的抓取/放置事务。
-8. `/behavior/nav_goal` 是观测 topic，`NavigateWaypointAction` 与 `NavTelemetrySerialNode` 都会发布；真正执行入口是 `/behavior/nav_execute` Action，不要依赖 ROS action hidden topic。
+2. 修改串口协议时，先更新 `serial_protocol.*` 与 `test_serial_protocol.cpp`，再更新 `SerialBridgeNode` 分发逻辑。
+3. 修改并发/超时逻辑时，重点检查 `reserveTransactionSlot()`、`begin*Transaction()`、`waitForTransaction()` 与 `feedbackTimerCallback()`。
+4. 修改真实串口实现时，保留 `SerialConnection` 抽象，确保测试仍可用 fake 串口无硬件运行。
+5. 增加新 MCU 回包时，必须明确其只对哪类 transaction 生效，避免不同 Action 互相误消费回包。
+6. 目标点导航链路应保持独立串口和单 goal 执行模型；不要把导航回包混入 `SerialBridgeNode` 的抓取/放置事务。
+7. `/behavior/nav_goal` 是观测 topic，`NavigateWaypointAction` 与 `NavTelemetrySerialNode` 都会发布；真正执行入口是 `/behavior/nav_execute` Action，不要依赖 ROS action hidden topic。
 
 ---
 

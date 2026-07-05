@@ -2,14 +2,13 @@
 
 ## Context
 - This repository is a ROS 2 Humble (Ubuntu 22.04) workspace built with `ament_cmake` and `colcon`.
-- Main first-party packages are under `src/`: `dog_interfaces`, `dog_perception`, `dog_lifecycle`, `dog_behavior`, `dog_serial_bridge`.
+- Main first-party packages are under `src/`: `dog_interfaces`, `dog_perception`, `dog_behavior`, `dog_serial_bridge`.
 - `build/`, `install/`, and `log/` are generated artifacts; do not hand-edit files there.
 
 ## Architecture
 - Keep package boundaries clear:
 - `dog_interfaces`: shared `msg`/`srv`/`action` contracts.
 - `dog_perception`: sensor processing and target outputs.
-- `dog_lifecycle`: health/state/degrade logic and system mode.
 - `dog_behavior`: behavior execution and action client orchestration.
 - `dog_serial_bridge`: serial action servers for pickup/place and waypoint navigation.
 - Prefer changes that preserve pub/sub and action-based decoupling between packages.
@@ -31,7 +30,7 @@
 - Follow existing ROS2 style in tests and nodes (`rclcpp`, `rclcpp_action`, explicit async wait helpers).
 
 ## Project-Specific Conventions
-- Most lifecycle/behavior topic payloads use semicolon-delimited `key=value` format; parse with `parseKeyValuePayload(...)`. `PlaceBoxes.payload` and `/behavior/grasp_feedback` are documented exceptions.
+- Behavior topic payloads use semicolon-delimited `key=value` format where applicable; parse with `parseKeyValuePayload(...)`. `PlaceBoxes.payload` is a documented exception.
 - Nodes expose `*ForTest()` methods for deterministic assertions in gtests; prefer these over timing-sensitive black-box checks.
 - `dog_behavior` behavior tree XML source is `src/dog_behavior/config/behavior_tree.xml`; preserve node IDs and blackboard key compatibility when changing behavior flow.
 
@@ -43,12 +42,10 @@
 ## Known Pitfalls
 - If workspace path changes, stale `build/<pkg>/CMakeCache.txt` may reference old paths and break builds; clean affected `build/<pkg>` and `install/<pkg>`.
 - `dog_perception` requires `vision_msgs`; install with `sudo apt install -y ros-humble-vision-msgs` when missing.
-- Heartbeat reconnect logic is sensitive to timing windows; keep `reconnect_pending_timeout_ms < restart_window_ms` so retry attempts can accumulate.
 
 ## Representative Files
 - Interfaces: `src/dog_interfaces/msg/Target3D.msg`, `src/dog_interfaces/action/ExecuteBehavior.action`
 - Perception: `src/dog_perception/src/perception_node.cpp`, `src/dog_perception/test/test_perception_node.cpp`
-- Lifecycle: `src/dog_lifecycle/src/lifecycle_node.cpp`, `src/dog_lifecycle/test/test_lifecycle_node.cpp`
 - Behavior: `src/dog_behavior/src/behavior_tree_node.cpp`, `src/dog_behavior/test/test_behavior_tree_node.cpp`
 
 ## Reference Docs
@@ -56,7 +53,6 @@
 - `README.md` for quick start and system data flow.
 - `docs/index.md` for documentation map.
 - `docs/dog-perception-ai-reference.md` for perception interfaces and call structure.
-- `docs/dog-lifecycle-ai-reference.md` for lifecycle interfaces and state handling.
 - `docs/dog-behavior-ai-reference.md` for behavior tree interfaces and call structure.
 - `docs/dog-serial-bridge-ai-reference.md` for MCU serial protocol and action mapping.
 - `docs/dog-interfaces-ai-reference.md` for shared ROS msg/srv/action contracts.

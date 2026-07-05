@@ -45,7 +45,7 @@ ros2 launch dog_behavior launch.py
 
 说明：
 - 启动入口位于 src/dog_behavior/launch/launch.py。
-- 核心节点包含 dog_perception_node、dog_lifecycle_node、dog_behavior_bt_node。
+- 核心节点包含 dog_perception_node、dog_behavior_bt_node。
 - 默认不启动下位机串口执行桥；实机闭环运行时使用 `use_serial_bridge:=true`。
 - 默认不启动目标点导航串口节点；实机导航闭环运行时使用 `use_nav_telemetry_serial:=true`。
 - 默认 launch 不提供 `/behavior/execute`、`/behavior/place_boxes`、`/behavior/nav_execute` 的 Action Server；正式行为树需要启用对应串口节点，或由外部节点提供同名 Action Server。
@@ -63,9 +63,6 @@ source install/setup.bash
 ros2 run dog_perception dog_perception_node
 
 # 终端 2
-ros2 run dog_lifecycle dog_lifecycle_node
-
-# 终端 3
 ros2 run dog_behavior dog_behavior_bt_node
 ~~~
 
@@ -127,10 +124,10 @@ ros2 launch dog_behavior launch.py match_type:=right
 
 ~~~bash
 # 核对核心包可见
-ros2 pkg list | grep -E "dog_perception|dog_lifecycle|dog_behavior|dog_interfaces|dog_serial_bridge"
+ros2 pkg list | grep -E "dog_perception|dog_behavior|dog_interfaces|dog_serial_bridge"
 
 # 核对关键 topic 是否存在
-ros2 topic list | grep -E "/target/target_3d|/lifecycle/system_mode|/dog/global_pose"
+ros2 topic list | grep -E "/target/target_3d|/dog/global_pose"
 
 # 启用 use_test_visualization 后核对 RViz2 可视化 topic
 ros2 topic list | grep -E "/behavior/test_visualization/route|/behavior/test_visualization/markers|/behavior/nav_goal|/behavior/nav_exec_state"
@@ -185,7 +182,6 @@ Dog/
 ├── src/
 │   ├── dog_interfaces/   # msg/srv/action 统一契约
 │   ├── dog_perception/   # 感知与目标结果输出
-│   ├── dog_lifecycle/    # 健康监控、降级与系统模式
 │   ├── dog_behavior/     # 行为执行与 Action 编排
 │   └── dog_serial_bridge/# 下位机串口动作桥与导航遥测
 ├── 3rd_party/
@@ -203,14 +199,8 @@ flowchart LR
   A[Camera / Livox] --> B[dog_perception]
   B --> C["/target/target_3d"]
   B --> D["/target/digit_result"]
-  C --> E[dog_lifecycle]
-  E --> F["/lifecycle/system_mode"]
-  E --> G["/lifecycle/health_alarm"]
-  E --> Q["/lifecycle/degrade_command"]
-  R["/lifecycle/degrade_ack"] --> E
-  E --> S["/lifecycle/transition_command"]
-  T["/lifecycle/transition_status"] --> E
-  F --> H[dog_behavior]
+  C --> H[dog_behavior]
+  D --> H
   H --> I["/dog/global_pose"]
   H --> J["/behavior/nav_execute"]
   H --> K["/behavior/nav_exec_state"]
@@ -221,11 +211,7 @@ flowchart LR
   O --> P[RViz2]
   L --> N
   M --> N
-  N --> U["/behavior/grasp_feedback"]
-  U --> E
 ~~~
-
-说明：当前仓库内没有发现默认的 `/lifecycle/transition_command` 消费者；该链路需要外部生命周期管理节点配合回传 `/lifecycle/transition_status`。
 
 ## 8. 开发与测试
 
@@ -233,7 +219,7 @@ flowchart LR
 
 ~~~bash
 source /opt/ros/humble/setup.bash
-colcon build --packages-select dog_interfaces dog_perception dog_lifecycle dog_behavior dog_serial_bridge
+colcon build --packages-select dog_interfaces dog_perception dog_behavior dog_serial_bridge
 source install/setup.bash
 ~~~
 
@@ -273,7 +259,6 @@ colcon test-result --all --verbose
 
 - docs/index.md
 - docs/dog-perception-ai-reference.md
-- docs/dog-lifecycle-ai-reference.md
 - docs/dog-behavior-ai-reference.md
 - docs/dog-serial-bridge-ai-reference.md
 - docs/dog-interfaces-ai-reference.md

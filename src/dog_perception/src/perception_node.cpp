@@ -4,7 +4,6 @@
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rmw/qos_profiles.h>
-#include <std_msgs/msg/string.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -221,7 +220,6 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , extrapolation_watchdog_ms_(20)
 , extrapolation_max_window_ms_(300)
 , extrapolation_min_interval_ms_(40)
-, idle_spinning_publish_ms_(200)
 , digit_roi_x_(0)
 , digit_roi_y_(0)
 , digit_roi_width_(64)
@@ -238,19 +236,15 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
 , box_max_detections_(16)
 , box_class_names_({"food", "tool", "instrument", "medical"})
 , qos_compatible_(true)
-, idle_spinning_mode_(false)
 , extrapolation_active_(false)
 , has_last_image_stamp_(false)
 , has_last_pointcloud_stamp_(false)
 , has_last_extrapolation_pub_time_(false)
-, has_last_idle_publish_time_(false)
-, has_mode_enter_time_(false)
 , dropped_frame_count_(0)
 , solved_frame_count_(0)
 , solve_failure_count_(0)
 , extrapolation_trigger_count_(0)
 , extrapolation_recovery_count_(0)
-, idle_spinning_trigger_count_(0)
 , frame_history_(8)
 , pose_history_(8)
 , latency_samples_ms_(8)
@@ -266,7 +260,6 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   pointcloud_topic_ = declare_parameter<std::string>("pointcloud_topic", "/livox/lidar");
   target3d_topic_ = declare_parameter<std::string>("target3d_topic", "/target/target_3d");
   digit_result_topic_ = declare_parameter<std::string>("digit_result_topic", "/target/digit_result");
-  lifecycle_mode_topic_ = declare_parameter<std::string>("lifecycle_mode_topic", "/lifecycle/system_mode");
   sync_queue_size_ = declare_parameter<int>("sync_queue_size", 10);
   sync_slop_ms_ = declare_parameter<int>("sync_slop_ms", 25);
   stale_frame_timeout_ms_ = declare_parameter<int>("stale_frame_timeout_ms", 50);
@@ -276,7 +269,6 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
   extrapolation_watchdog_ms_ = declare_parameter<int>("extrapolation_watchdog_ms", 20);
   extrapolation_max_window_ms_ = declare_parameter<int>("extrapolation_max_window_ms", 300);
   extrapolation_min_interval_ms_ = declare_parameter<int>("extrapolation_min_interval_ms", 40);
-  idle_spinning_publish_ms_ = declare_parameter<int>("idle_spinning_publish_ms", 200);
   qos_reliability_ = declare_parameter<std::string>("qos_reliability", "best_effort");
   solver_type_ = declare_parameter<std::string>("solver_type", "minimal_pnp");
   digit_recognizer_type_ = declare_parameter<std::string>("digit_recognizer_type", "math_ocr");
@@ -305,11 +297,10 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
     max_future_skew_ms_ < 0 || frame_cache_size_ <= 0 || digit_temporal_window_ <= 0 ||
     single_side_dropout_timeout_ms_ <= 0 || extrapolation_watchdog_ms_ <= 0 ||
     extrapolation_max_window_ms_ <= 0 || extrapolation_min_interval_ms_ <= 0 ||
-    idle_spinning_publish_ms_ <= 0 ||
     digit_temporal_confirm_count_ <= 0)
   {
     throw std::runtime_error(
-            "invalid positive parameters: sync/slop/stale/cache/temporal/dropout/extrapolation/idle values must be > 0, max_future_skew_ms must be >= 0");
+            "invalid positive parameters: sync/slop/stale/cache/temporal/dropout/extrapolation values must be > 0, max_future_skew_ms must be >= 0");
   }
 
   if (sync_queue_size_ > kMaxSyncQueueSize || frame_cache_size_ > kMaxFrameCacheSize ||
@@ -384,24 +375,17 @@ PerceptionNode::PerceptionNode(const rclcpp::NodeOptions & options)
     pointcloud_topic_,
     rclcpp::SensorDataQoS(),
     std::bind(&PerceptionNode::pointcloudStampCallback, this, std::placeholders::_1));
-  lifecycle_mode_sub_ = create_subscription<std_msgs::msg::String>(
-    lifecycle_mode_topic_,
-    rclcpp::QoS(rclcpp::KeepLast(1))
-    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-    .durability(rclcpp::DurabilityPolicy::TransientLocal),
-    std::bind(&PerceptionNode::lifecycleModeCallback, this, std::placeholders::_1));
   watchdog_timer_ = create_wall_timer(
     std::chrono::milliseconds(extrapolation_watchdog_ms_),
     std::bind(&PerceptionNode::watchdogCallback, this));
 
   RCLCPP_INFO(
     get_logger(),
-    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, digit_result_topic=%s, mode_topic=%s, extrinsics_yaml_path=%s",
+    "dog_perception initialized, image_topic=%s, pointcloud_topic=%s, target3d_topic=%s, digit_result_topic=%s, extrinsics_yaml_path=%s",
     image_topic_.c_str(),
     pointcloud_topic_.c_str(),
     target3d_topic_.c_str(),
     digit_result_topic_.c_str(),
-    lifecycle_mode_topic_.c_str(),
     extrinsics_yaml_path_.c_str());
 }
 
@@ -541,11 +525,6 @@ void PerceptionNode::synchronizedCallback(
   imageStampCallback(image_msg);
   pointcloudStampCallback(pointcloud_msg);
 
-  if (idle_spinning_mode_) {
-    frame_history_.push_back(FrameState{begin, 0.0, false});
-    return;
-  }
-
   qos_compatible_ = evaluateRuntimeQosCompatibility();
   if (!qos_compatible_) {
     ++dropped_frame_count_;
@@ -667,80 +646,9 @@ void PerceptionNode::pointcloudStampCallback(
   has_last_pointcloud_stamp_ = true;
 }
 
-void PerceptionNode::lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg)
-{
-  if (!msg) {
-    return;
-  }
-
-  const auto payload = msg->data;
-  const auto mode_position = payload.find("mode=");
-  if (mode_position == std::string::npos) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      1000,
-      "ignore lifecycle mode payload without mode key: %s",
-      payload.c_str());
-    return;
-  }
-
-  const auto value_start = mode_position + 5;
-  const auto value_end = payload.find(';', value_start);
-  std::string mode_token = payload.substr(
-    value_start,
-    value_end == std::string::npos ? std::string::npos : value_end - value_start);
-
-  std::transform(
-    mode_token.begin(), mode_token.end(), mode_token.begin(),
-    [](unsigned char c) {return static_cast<char>(std::tolower(c));});
-
-  if (mode_token != "idle_spinning" && mode_token != "normal" && mode_token != "degraded") {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      1000,
-      "ignore unknown lifecycle mode=%s payload=%s",
-      mode_token.c_str(),
-      payload.c_str());
-    return;
-  }
-
-  const bool to_idle_spinning = (mode_token == "idle_spinning" || mode_token == "degraded");
-  if (to_idle_spinning == idle_spinning_mode_) {
-    return;
-  }
-
-  const auto switch_time = now();
-  idle_spinning_mode_ = to_idle_spinning;
-
-  if (idle_spinning_mode_) {
-    ++idle_spinning_trigger_count_;
-    has_mode_enter_time_ = true;
-    mode_enter_time_ = switch_time;
-    RCLCPP_WARN(get_logger(), "enter idle_spinning mode, payload=%s", payload.c_str());
-    return;
-  }
-
-  if (has_mode_enter_time_) {
-    const auto duration_ms = (switch_time - mode_enter_time_).nanoseconds() / 1000000;
-    RCLCPP_INFO(
-      get_logger(),
-      "exit idle_spinning mode after %ld ms, payload=%s",
-      duration_ms,
-      payload.c_str());
-    has_mode_enter_time_ = false;
-  }
-}
-
 void PerceptionNode::watchdogCallback()
 {
   const auto current_time = now();
-
-  if (idle_spinning_mode_) {
-    publishIdleSpinningPose(current_time);
-    return;
-  }
 
   std::string reason;
   if (!shouldTriggerExtrapolation(current_time, reason)) {
@@ -834,29 +742,6 @@ bool PerceptionNode::publishExtrapolatedTarget(
     reason.c_str(),
     extrapolation_trigger_count_);
   return true;
-}
-
-void PerceptionNode::publishIdleSpinningPose(const rclcpp::Time & current_time)
-{
-  if (has_last_idle_publish_time_) {
-    const auto elapsed_ms = (current_time - last_idle_publish_time_).nanoseconds() / 1000000;
-    if (elapsed_ms < idle_spinning_publish_ms_) {
-      return;
-    }
-  }
-
-  dog_interfaces::msg::Target3D target;
-  target.header.stamp = current_time;
-  target.header.frame_id = camera_extrinsics_.frame_id;
-  target.target_id = "idle_spinning";
-  target.confidence = 0.0F;
-
-  dog_interfaces::msg::Target3DArray message;
-  message.header = target.header;
-  message.targets.push_back(target);
-  target3d_pub_->publish(std::move(message));
-  has_last_idle_publish_time_ = true;
-  last_idle_publish_time_ = current_time;
 }
 
 void PerceptionNode::processDigitRecognition(
@@ -988,19 +873,9 @@ size_t PerceptionNode::getExtrapolationRecoveryCount() const
   return extrapolation_recovery_count_;
 }
 
-size_t PerceptionNode::getIdleSpinningTriggerCount() const
-{
-  return idle_spinning_trigger_count_;
-}
-
 bool PerceptionNode::isQosCompatible() const
 {
   return qos_compatible_;
-}
-
-bool PerceptionNode::isIdleSpinningMode() const
-{
-  return idle_spinning_mode_;
 }
 
 double PerceptionNode::getLatencyP95Ms() const

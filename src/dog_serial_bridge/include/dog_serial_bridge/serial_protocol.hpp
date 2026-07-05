@@ -30,6 +30,5 @@ std::string buildPickupCommand();
 std::string buildPlaceCommand(const std::string & payload);
 bool parsePlacePayload(const std::string & payload, PlacePayload & parsed, std::string & error_detail);
 ReplyType classifyReply(const std::string & line);
-std::string buildPickupFeedback(uint64_t sequence, bool success);
 
 }  // namespace dog_serial_bridge

@@ -79,13 +79,11 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickSucceedsAfterReceivingPose)
   const std::string odom_topic = "/test/bt/localization/success";
   const std::string pose_topic = "/test/bt/global_pose/success";
   const std::string trigger_topic = "/test/bt/execute_trigger/success";
-  const std::string system_mode_topic = "/test/bt/system_mode/success";
 
   rclcpp::NodeOptions options;
   options.append_parameter_override("global_pose_topic", pose_topic);
   options.append_parameter_override("localization_topic", odom_topic);
   options.append_parameter_override("execute_behavior_trigger_topic", trigger_topic);
-  options.append_parameter_override("system_mode_topic", system_mode_topic);
   options.append_parameter_override("tree_xml_file_path", std::string(DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH));
   options.append_parameter_override("bt_tick_period_ms", 50);
   options.append_parameter_override("auto_start", false);
@@ -99,11 +97,6 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickSucceedsAfterReceivingPose)
   auto trigger_pub = io_node->create_publisher<std_msgs::msg::String>(
     trigger_topic,
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
-  auto mode_pub = io_node->create_publisher<std_msgs::msg::String>(
-    system_mode_topic,
-    rclcpp::QoS(rclcpp::KeepLast(1))
-    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-    .durability(rclcpp::DurabilityPolicy::TransientLocal));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(bt_node);
@@ -115,10 +108,6 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickSucceedsAfterReceivingPose)
     [&io_node, &odom_topic, &trigger_topic]() {
       return io_node->count_subscribers(odom_topic) > 0u && io_node->count_subscribers(trigger_topic) > 0u;
     }));
-
-  std_msgs::msg::String mode_msg;
-  mode_msg.data = "mode=normal";
-  mode_pub->publish(mode_msg);
 
   nav_msgs::msg::Odometry odom_msg;
   odom_msg.header.stamp = bt_node->now();
@@ -149,16 +138,14 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickSucceedsAfterReceivingPose)
   executor.remove_node(bt_node);
 }
 
-TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
+TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWithoutPose)
 {
   const std::string odom_topic = "/test/bt/localization/failure";
   const std::string trigger_topic = "/test/bt/execute_trigger/failure";
-  const std::string system_mode_topic = "/test/bt/system_mode/failure";
 
   rclcpp::NodeOptions options;
   options.append_parameter_override("localization_topic", odom_topic);
   options.append_parameter_override("execute_behavior_trigger_topic", trigger_topic);
-  options.append_parameter_override("system_mode_topic", system_mode_topic);
   options.append_parameter_override("tree_xml_file_path", std::string(DOG_BEHAVIOR_TEST_BT_MAIN_XML_PATH));
   options.append_parameter_override("bt_tick_period_ms", 50);
   options.append_parameter_override("auto_start", false);
@@ -166,17 +153,9 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
   auto bt_node = std::make_shared<dog_behavior::BehaviorTreeNode>(options);
   auto io_node = std::make_shared<rclcpp::Node>("bt_node_test_io_failure");
 
-  auto odom_pub = io_node->create_publisher<nav_msgs::msg::Odometry>(
-    odom_topic,
-    rclcpp::SensorDataQoS().keep_last(20));
   auto trigger_pub = io_node->create_publisher<std_msgs::msg::String>(
     trigger_topic,
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
-  auto mode_pub = io_node->create_publisher<std_msgs::msg::String>(
-    system_mode_topic,
-    rclcpp::QoS(rclcpp::KeepLast(1))
-    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-    .durability(rclcpp::DurabilityPolicy::TransientLocal));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(bt_node);
@@ -185,19 +164,9 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
   ASSERT_TRUE(waitUntil(
     executor,
     std::chrono::milliseconds(1500),
-    [&io_node, &odom_topic, &trigger_topic]() {
-      return io_node->count_subscribers(odom_topic) > 0u && io_node->count_subscribers(trigger_topic) > 0u;
+    [&io_node, &trigger_topic]() {
+      return io_node->count_subscribers(trigger_topic) > 0u;
     }));
-
-  std_msgs::msg::String mode_msg;
-  mode_msg.data = "mode=idle_spinning";
-  mode_pub->publish(mode_msg);
-
-  nav_msgs::msg::Odometry odom_msg;
-  odom_msg.header.stamp = bt_node->now();
-  odom_msg.header.frame_id = "map";
-  odom_msg.pose.pose.orientation.w = 1.0;
-  odom_pub->publish(odom_msg);
 
   std_msgs::msg::String trigger_msg;
   trigger_msg.data = "grasp";
@@ -205,12 +174,11 @@ TEST_F(BehaviorTreeNodeTest, TriggeredTickFailsWhenSystemModeNotNormal)
 
   ASSERT_TRUE(waitUntil(
     executor,
-    std::chrono::milliseconds(2000),
+    std::chrono::milliseconds(6500),
     [&bt_node]() {
-      return bt_node->TickCountForTest() > 0;
+      return bt_node->TickCountForTest() > 0 && !bt_node->IsTreeActiveForTest();
     }));
 
-  EXPECT_EQ(bt_node->SystemModeForTest(), "idle_spinning");
   EXPECT_EQ(bt_node->LastTickStatusForTest(), "failure");
   EXPECT_FALSE(bt_node->IsTreeActiveForTest());
 

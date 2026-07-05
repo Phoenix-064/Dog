@@ -4,7 +4,6 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
-#include <std_msgs/msg/string.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
 #include <chrono>
@@ -150,7 +149,6 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   const std::string & qos_reliability = "best_effort",
   int stale_timeout_ms = 50,
   int dropout_timeout_ms = 150,
-  const std::string & lifecycle_mode_topic = "/test/lifecycle/system_mode/default",
   int digit_temporal_confirm_count = 2,
   const std::string & digit_recognizer_type = "heuristic",
   const std::string & solver_type = "mock_minimal")
@@ -168,7 +166,6 @@ std::shared_ptr<dog_perception::PerceptionNode> createPerceptionNode(
   options.append_parameter_override("single_side_dropout_timeout_ms", dropout_timeout_ms);
   options.append_parameter_override("extrapolation_watchdog_ms", 20);
   options.append_parameter_override("extrapolation_min_interval_ms", 30);
-  options.append_parameter_override("lifecycle_mode_topic", lifecycle_mode_topic);
   options.append_parameter_override("digit_temporal_window", 5);
   options.append_parameter_override("digit_temporal_confirm_count", digit_temporal_confirm_count);
   options.append_parameter_override("digit_roi_width", 64);
@@ -514,7 +511,6 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverPublishesBoxFallbackWhenModelUnavaila
     "best_effort",
     50,
     150,
-    "/test/lifecycle/system_mode/minimal_pnp",
     2,
     "heuristic",
     "minimal_pnp");
@@ -588,7 +584,6 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsPointCloudWithoutXyzFields)
     "best_effort",
     50,
     150,
-    "/test/lifecycle/system_mode/minimal_pnp_missing_xyz",
     2,
     "heuristic",
     "minimal_pnp");
@@ -642,7 +637,6 @@ TEST_F(PerceptionNodeTest, MinimalPnpSolverSkipsAllNonFinitePoints)
     "best_effort",
     50,
     150,
-    "/test/lifecycle/system_mode/minimal_pnp_non_finite",
     2,
     "heuristic",
     "minimal_pnp");
@@ -688,7 +682,6 @@ TEST_F(PerceptionNodeTest, SingleSideDropoutTriggersExtrapolationAndThenRecovers
   const std::string image_topic = "/test/image/dropout_extrapolation";
   const std::string cloud_topic = "/test/cloud/dropout_extrapolation";
   const std::string target_topic = "/test/target/dropout_extrapolation";
-  const std::string mode_topic = "/test/lifecycle/system_mode/dropout_extrapolation";
 
   auto perception_node = createPerceptionNode(
     yaml_path,
@@ -700,16 +693,12 @@ TEST_F(PerceptionNodeTest, SingleSideDropoutTriggersExtrapolationAndThenRecovers
     "best_effort",
     50,
     80,
-    mode_topic,
     2,
     "heuristic");
   auto io_node = std::make_shared<rclcpp::Node>("io_dropout_extrapolation");
 
   auto image_pub = io_node->create_publisher<sensor_msgs::msg::Image>(image_topic, rclcpp::SensorDataQoS());
   auto cloud_pub = io_node->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic, rclcpp::SensorDataQoS());
-  auto mode_pub = io_node->create_publisher<std_msgs::msg::String>(
-    mode_topic,
-    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
 
   size_t extrapolated_count = 0U;
   auto target_sub = io_node->create_subscription<dog_interfaces::msg::Target3DArray>(
@@ -725,10 +714,6 @@ TEST_F(PerceptionNodeTest, SingleSideDropoutTriggersExtrapolationAndThenRecovers
   executor.add_node(perception_node);
   executor.add_node(io_node);
   spinFor(executor, std::chrono::milliseconds(120));
-
-  std_msgs::msg::String normal_mode;
-  normal_mode.data = "mode=normal;reason=test_setup";
-  mode_pub->publish(normal_mode);
 
   const auto stamp1 = io_node->now();
   image_pub->publish(makeImage(stamp1));
@@ -841,7 +826,6 @@ TEST_F(PerceptionNodeTest, DigitRecognitionAcceptsMultipleInferenceResults)
     "best_effort",
     50,
     150,
-    "/test/lifecycle/system_mode/digit_multi",
     1,
     "test_multi_result");
   auto io_node = std::make_shared<rclcpp::Node>("io_digit_multi");
@@ -1007,6 +991,7 @@ TEST_F(PerceptionNodeTest, DetectorTypeSwitchKeepsOutputContract)
     "best_effort",
     50,
     1,
+    2,
     "mean_intensity");
   auto io_node = std::make_shared<rclcpp::Node>("io_detector_switch");
 

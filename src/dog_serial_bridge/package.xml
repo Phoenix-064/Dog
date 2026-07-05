@@ -10,7 +10,6 @@
 
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
-  <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>dog_interfaces</depend>
 

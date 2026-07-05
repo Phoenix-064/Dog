@@ -48,8 +48,7 @@ PerceptionNode 运行时主线：
 1. 同步图像与点云，驱动目标求解并发布 Target3DArray。
 2. 同时执行数字识别并发布独立数字结果流。
 3. 在单边掉流或时间戳偏斜时做外推发布。
-4. 在 lifecycle 模式切换到 idle_spinning 或 degraded 时发布占位姿态。
-5. 维护 QoS 兼容性、时延统计与缓存指标（P95、丢帧、恢复计数）。
+4. 维护 QoS 兼容性、时延统计与缓存指标（P95、丢帧、恢复计数）。
 
 启动约束补充：
 
@@ -97,29 +96,24 @@ flowchart TD
 3. 同步流水线初始化：[src/dog_perception/src/perception_node.cpp#L446](../src/dog_perception/src/perception_node.cpp#L446)
 4. 陈旧帧判定：[src/dog_perception/src/perception_node.cpp#L491](../src/dog_perception/src/perception_node.cpp#L491)
 5. 同步回调主入口：[src/dog_perception/src/perception_node.cpp#L506](../src/dog_perception/src/perception_node.cpp#L506)
-6. lifecycle 模式回调：[src/dog_perception/src/perception_node.cpp#L638](../src/dog_perception/src/perception_node.cpp#L638)
-7. watchdog 回调：[src/dog_perception/src/perception_node.cpp#L704](../src/dog_perception/src/perception_node.cpp#L704)
-8. 外推触发判断：[src/dog_perception/src/perception_node.cpp#L721](../src/dog_perception/src/perception_node.cpp#L721)
-9. 发布外推目标：[src/dog_perception/src/perception_node.cpp#L756](../src/dog_perception/src/perception_node.cpp#L756)
-10. 发布 idle 占位：[src/dog_perception/src/perception_node.cpp#L807](../src/dog_perception/src/perception_node.cpp#L807)
-11. 数字识别处理：[src/dog_perception/src/perception_node.cpp#L830](../src/dog_perception/src/perception_node.cpp#L830)
+6. watchdog 回调：[src/dog_perception/src/perception_node.cpp](../src/dog_perception/src/perception_node.cpp)
+7. 外推触发判断：[src/dog_perception/src/perception_node.cpp](../src/dog_perception/src/perception_node.cpp)
+8. 发布外推目标：[src/dog_perception/src/perception_node.cpp](../src/dog_perception/src/perception_node.cpp)
+9. 数字识别处理：[src/dog_perception/src/perception_node.cpp](../src/dog_perception/src/perception_node.cpp)
 
 同步回调内部顺序（高频主路径）：
 
 1. 更新时间戳缓存。
-2. 若处于 idle_spinning，直接记录并返回。
-3. 重新评估 QoS 兼容，不兼容则丢帧。
-4. 检查 stale/future skew，不通过则丢帧。
-5. 执行数字识别并发布 digit_result。
-6. 调用 solver 求解 Target3D。
-7. 调用 box_detector 生成箱体 Target3DArray，并按两排空间顺序整理。
-8. 统计时延样本，写入 pose/history，发布箱体 target3d 数组。
+2. 重新评估 QoS 兼容，不兼容则丢帧。
+3. 检查 stale/future skew，不通过则丢帧。
+4. 执行数字识别并发布 digit_result。
+5. 调用 solver 求解 Target3D。
+6. 调用 box_detector 生成箱体 Target3DArray，并按两排空间顺序整理。
+7. 统计时延样本，写入 pose/history，发布箱体 target3d 数组。
 
 ```mermaid
 flowchart TD
-  A[synchronizedCallback] --> B[idle_spinning_mode?]
-  B -->|yes| C[record frame only]
-  B -->|no| D[evaluateRuntimeQosCompatibility]
+  A[synchronizedCallback] --> D[evaluateRuntimeQosCompatibility]
   D -->|false| E[drop frame]
   D -->|true| F[shouldDropAsStale]
   F -->|true| E
@@ -129,18 +123,6 @@ flowchart TD
   H -->|true| J[box_detector->detect]
   J --> K[publish target3d]
 ```
-
-### 3.3 生命周期模式与退化行为链
-
-1. 订阅 lifecycle mode payload：[src/dog_perception/src/perception_node.cpp#L638](../src/dog_perception/src/perception_node.cpp#L638)
-2. 解析 mode=normal|idle_spinning|degraded。
-3. 当切到 idle_spinning/degraded：停止正常解算输出，转为 watchdog 周期发布占位目标。
-4. 当切回 normal：恢复同步解算；若此前外推活跃，恢复时增加 recovery 计数。
-
-watchdog 分支：
-
-1. idle 分支：[src/dog_perception/src/perception_node.cpp#L704](../src/dog_perception/src/perception_node.cpp#L704)
-2. 外推分支：[src/dog_perception/src/perception_node.cpp#L721](../src/dog_perception/src/perception_node.cpp#L721)
 
 ### 3.4 3D 求解器工厂链
 
@@ -218,7 +200,6 @@ MinimalPnpSolver 关键处理：
 
 1. image_topic，默认 /camera/image_raw，类型 sensor_msgs/msg/Image，QoS SensorData。
 2. pointcloud_topic，默认 /livox/lidar，类型 sensor_msgs/msg/PointCloud2，QoS SensorData。
-3. lifecycle_mode_topic，默认 /lifecycle/system_mode，类型 std_msgs/msg/String，QoS Reliable + TransientLocal KeepLast(1)。
 
 ### 4.2 PerceptionNode 发布接口
 
@@ -230,21 +211,7 @@ MinimalPnpSolver 关键处理：
 
 1. image_topic，默认 /camera/image_raw，类型 sensor_msgs/msg/Image，QoS SensorData。
 
-### 4.4 字符串负载协议
-
-lifecycle_mode_topic 负载至少包含 mode 键：
-
-1. mode=normal
-2. mode=idle_spinning
-3. mode=degraded
-
-解析规则：
-
-1. 以 mode= 为关键字，分号为字段分隔。
-2. mode token 会转小写后比较。
-3. 未知 mode 或缺失 mode 字段会被忽略并告警。
-
-### 4.5 消息结构依赖（dog_interfaces）
+### 4.4 消息结构依赖（dog_interfaces）
 
 1. Target3D：[src/dog_interfaces/msg/Target3D.msg](../src/dog_interfaces/msg/Target3D.msg)
 2. Target3DArray：[src/dog_interfaces/msg/Target3DArray.msg](../src/dog_interfaces/msg/Target3DArray.msg)
@@ -266,10 +233,9 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 2. pointcloud_topic=/livox/lidar
 3. target3d_topic=/target/target_3d
 4. digit_result_topic=/target/digit_result
-5. lifecycle_mode_topic=/lifecycle/system_mode
-6. qos_reliability=best_effort
-7. solver_type=minimal_pnp
-8. digit_recognizer_type=math_ocr
+5. qos_reliability=best_effort
+6. solver_type=minimal_pnp
+7. digit_recognizer_type=math_ocr
 
 同步与时序参数：
 
@@ -282,7 +248,6 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 7. extrapolation_watchdog_ms=20
 8. extrapolation_max_window_ms=300
 9. extrapolation_min_interval_ms=40
-10. idle_spinning_publish_ms=200
 
 数字识别参数：
 
@@ -333,7 +298,7 @@ lifecycle_mode_topic 负载至少包含 mode 键：
 1. 同步订阅 QoS 基于参数 qos_reliability 动态映射为 best_effort 或 reliable。
 2. setupSynchronizedPipeline 内会检查 image_topic 与 pointcloud_topic 的发布端 QoS 可靠性。
 3. 若发现不兼容，synchronized callback 会持续丢帧并输出节流错误日志。
-4. `target3d_topic` 与 `digit_result_topic` 使用 `SensorDataQoS` 发布。`dog_lifecycle` 订阅 `/target/target_3d` 也使用 `SensorDataQoS`，但 `dog_behavior` 的 `SetBoxesTypeAction` 当前使用默认 reliable `QoS(10)`，在 ROS 2 可靠性规则下可能与 best-effort 发布端不匹配，联调时需重点检查。
+4. `target3d_topic` 与 `digit_result_topic` 使用 `SensorDataQoS` 发布；`dog_behavior` 的 `SetBoxesTypeAction` 当前使用默认 reliable `QoS(10)`，在 ROS 2 可靠性规则下可能与 best-effort 发布端不匹配，联调时需重点检查。
 
 检查入口：[src/dog_perception/src/perception_node.cpp#L409](../src/dog_perception/src/perception_node.cpp#L409)
 
@@ -405,10 +370,9 @@ P95 相关实现位置：
 
 1. dog_perception synchronizedCallback call chain with digit and pnp solver
 2. perception watchdog single_side_dropout timestamp_skew extrapolation
-3. lifecycle mode idle_spinning degraded interaction in perception
-4. digit recognizer factory default math_ocr and fallback heuristic behavior
-5. box detector no_box fallback and normalized position semantics
-6. qos reliability mismatch runtime check in dog_perception
+3. digit recognizer factory default math_ocr and fallback heuristic behavior
+4. box detector no_box fallback and normalized position semantics
+5. qos reliability mismatch runtime check in dog_perception
 
 可用于变更影响分析的入口函数：
 
@@ -421,7 +385,6 @@ P95 相关实现位置：
 
 ## 11. 维护建议
 
-1. 修改 lifecycle_mode 字符串协议时，同步更新 mode 解析与回调测试。
-2. 修改同步/掉帧阈值时，优先回归 stale、dropout extrapolation、QoS 兼容场景。
-3. 修改识别器工厂注册机制时，回归 duplicate registration、fallback、null creator 场景。
-4. 修改箱体 Target3DArray 发布契约时，回归 no_box fallback 与 8 箱排序测试。
+1. 修改同步/掉帧阈值时，优先回归 stale、dropout extrapolation、QoS 兼容场景。
+2. 修改识别器工厂注册机制时，回归 duplicate registration、fallback、null creator 场景。
+3. 修改箱体 Target3DArray 发布契约时，回归 no_box fallback 与 8 箱排序测试。

@@ -5,7 +5,6 @@
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
-#include <std_msgs/msg/string.hpp>
 
 #include <chrono>
 #include <condition_variable>
@@ -228,20 +227,12 @@ protected:
   }
 };
 
-TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsAndPublishesLifecycleFeedback)
+TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsOnPickSuccess)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
   auto client_node = std::make_shared<rclcpp::Node>("serial_bridge_execute_success_client");
   auto client = rclcpp_action::create_client<ExecuteBehavior>(client_node, "/behavior/execute");
-
-  std::string grasp_feedback;
-  auto feedback_sub = client_node->create_subscription<std_msgs::msg::String>(
-    "/behavior/grasp_feedback",
-    10,
-    [&grasp_feedback](const std_msgs::msg::String::ConstSharedPtr msg) {
-      grasp_feedback = msg->data;
-    });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(bridge_node);
@@ -269,18 +260,16 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsAndPublishesLifecycleFeedbac
   fake_serial->enqueueIncomingLine("RCPickSuccess\n");
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
-    return state.result_ready && !grasp_feedback.empty();
+    return state.result_ready;
   }));
 
   EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
   EXPECT_TRUE(state.wrapped_result.result->accepted);
   EXPECT_EQ(state.wrapped_result.result->detail, "pick_success");
-  EXPECT_EQ(grasp_feedback, "pickup_1|success");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
-  (void)feedback_sub;
 }
 
 TEST_F(SerialBridgeNodeTest, ExecuteBehaviorReturnsSucceededFalseOnPickFail)
@@ -289,14 +278,6 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorReturnsSucceededFalseOnPickFail)
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
   auto client_node = std::make_shared<rclcpp::Node>("serial_bridge_execute_fail_client");
   auto client = rclcpp_action::create_client<ExecuteBehavior>(client_node, "/behavior/execute");
-
-  std::string grasp_feedback;
-  auto feedback_sub = client_node->create_subscription<std_msgs::msg::String>(
-    "/behavior/grasp_feedback",
-    10,
-    [&grasp_feedback](const std_msgs::msg::String::ConstSharedPtr msg) {
-      grasp_feedback = msg->data;
-    });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(bridge_node);
@@ -317,18 +298,16 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorReturnsSucceededFalseOnPickFail)
   fake_serial->enqueueIncomingLine("RCPickFail\n");
 
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
-    return state.result_ready && !grasp_feedback.empty();
+    return state.result_ready;
   }));
 
   EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
   EXPECT_FALSE(state.wrapped_result.result->accepted);
   EXPECT_EQ(state.wrapped_result.result->detail, "pick_fail");
-  EXPECT_EQ(grasp_feedback, "pickup_1|empty_grasp");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
-  (void)feedback_sub;
 }
 
 TEST_F(SerialBridgeNodeTest, ExecuteBehaviorRejectsUnsupportedBehavior)

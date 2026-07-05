@@ -62,10 +62,4 @@ TEST(SerialProtocolTest, ClassifiesReplies)
   EXPECT_EQ(dog_serial_bridge::classifyReply("RCOther"), ReplyType::kUnknown);
 }
 
-TEST(SerialProtocolTest, BuildsLifecycleFeedback)
-{
-  EXPECT_EQ(dog_serial_bridge::buildPickupFeedback(3U, true), "pickup_3|success");
-  EXPECT_EQ(dog_serial_bridge::buildPickupFeedback(7U, false), "pickup_7|empty_grasp");
-}
-
 }  // namespace

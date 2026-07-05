@@ -307,20 +307,6 @@ def generate_launch_description() -> LaunchDescription:
         ])),
     )
 
-    lifecycle_node = Node(
-        package="dog_lifecycle",
-        executable="dog_lifecycle_node",
-        name="dog_lifecycle",
-        output="screen",
-        parameters=[{
-            "valid_frame_topic": "/target/target_3d",
-            "heartbeat_timeout_ms": ParameterValue(
-                PythonExpression(["600000 if '", test_mode, "' == 'true' else 2000"]),
-                value_type=int,
-            ),
-        }],
-    )
-
     serial_bridge_node = Node(
         package="dog_serial_bridge",
         executable="dog_serial_bridge_node",
@@ -411,7 +397,6 @@ def generate_launch_description() -> LaunchDescription:
         third_party_actions,
         perception_node,
         perception_camera_node,
-        lifecycle_node,
         serial_bridge_node,
         nav_telemetry_serial_node,
         static_map_camera_tf,

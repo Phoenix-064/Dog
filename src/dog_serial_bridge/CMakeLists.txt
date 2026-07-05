@@ -12,7 +12,6 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(dog_interfaces REQUIRED)
 
@@ -29,7 +28,6 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
 ament_target_dependencies(${PROJECT_NAME}_lib
   rclcpp
   rclcpp_action
-  std_msgs
   geometry_msgs
   dog_interfaces
 )
@@ -70,7 +68,6 @@ if(BUILD_TESTING)
     ament_target_dependencies(test_serial_bridge_node
       rclcpp
       rclcpp_action
-      std_msgs
       geometry_msgs
       dog_interfaces
     )

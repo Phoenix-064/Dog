@@ -97,6 +97,9 @@ install(DIRECTORY config
 if(BUILD_TESTING)
   find_package(tf2_msgs REQUIRED)
   find_package(ament_cmake_gtest REQUIRED)
+  set(TEST_ROS_LOG_DIR "${CMAKE_CURRENT_BINARY_DIR}/ros_log")
+  file(MAKE_DIRECTORY "${TEST_ROS_LOG_DIR}")
+
   ament_add_gtest(test_perception_node test/test_perception_node.cpp)
   if(TARGET test_perception_node)
     target_link_libraries(test_perception_node ${PROJECT_NAME}_lib)
@@ -120,6 +123,18 @@ if(BUILD_TESTING)
     target_link_libraries(test_box_detector ${PROJECT_NAME}_lib)
     ament_target_dependencies(test_box_detector rclcpp sensor_msgs)
   endif()
+
+  foreach(test_target IN ITEMS
+    test_perception_node
+    test_digit_recognizer_factory
+    test_camera_publisher_node
+    test_box_detector
+  )
+    if(TARGET ${test_target})
+      set_tests_properties(${test_target}
+        PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
+    endif()
+  endforeach()
 endif()
 
 ament_package()

@@ -28,7 +28,6 @@ add_library(${PROJECT_NAME}_lib
   src/behavior_tree_node.cpp
   src/bt_nodes/advance_place_counter_action.cpp
   src/bt_nodes/auto_success_action.cpp
-  src/bt_nodes/check_system_mode.cpp
   src/bt_nodes/execute_place_boxes_action.cpp
   src/bt_nodes/wait_for_pose_condition.cpp
   src/bt_nodes/place_index_action.cpp
@@ -115,14 +114,6 @@ if(BUILD_TESTING)
     )
     set_tests_properties(test_behavior_tree_node
       PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
-  endif()
-
-  ament_add_gtest(test_check_system_mode test/test_check_system_mode.cpp)
-  if(TARGET test_check_system_mode)
-    target_link_libraries(test_check_system_mode ${PROJECT_NAME}_lib)
-    ament_target_dependencies(test_check_system_mode
-      behaviortree_cpp_v3
-    )
   endif()
 
   ament_add_gtest(test_auto_success_action test/test_auto_success_action.cpp)
@@ -249,6 +240,27 @@ if(BUILD_TESTING)
       dog_interfaces
     )
   endif()
+
+  foreach(test_target IN ITEMS
+    test_behavior_tree_node
+    test_auto_success_action
+    test_wait_for_pose_condition
+    test_select_waypoint_action
+    test_execute_behavior_action
+    test_navigate_waypoint_action
+    test_test_visualization_node
+    test_set_boxes_type_action
+    test_advance_place_counter_action
+    test_place_rule_action
+    test_place_index_action
+    test_execute_place_boxes_action
+    test_publish_math_answer_action
+  )
+    if(TARGET ${test_target})
+      set_tests_properties(${test_target}
+        PROPERTIES ENVIRONMENT "ROS_LOG_DIR=${TEST_ROS_LOG_DIR}")
+    endif()
+  endforeach()
 endif()
 
 ament_package()

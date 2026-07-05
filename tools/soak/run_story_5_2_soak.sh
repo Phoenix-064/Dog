@@ -11,10 +11,9 @@ REPORT_FILE="$OUT_DIR/soak-report-$TS.md"
 mkdir -p "$OUT_DIR"
 
 PERCEPTION_BIN="$ROOT_DIR/build/dog_perception/test_perception_node"
-LIFECYCLE_BIN="$ROOT_DIR/build/dog_lifecycle/test_lifecycle_node"
-BEHAVIOR_BIN="$ROOT_DIR/build/dog_behavior/test_behavior_node"
+BEHAVIOR_BIN="$ROOT_DIR/build/dog_behavior/test_behavior_tree_node"
 
-for bin in "$PERCEPTION_BIN" "$LIFECYCLE_BIN" "$BEHAVIOR_BIN"; do
+for bin in "$PERCEPTION_BIN" "$BEHAVIOR_BIN"; do
   if [[ ! -x "$bin" ]]; then
     echo "Missing executable: $bin" >&2
     echo "Please build tests first (colcon test / colcon build with tests enabled)." >&2
@@ -49,8 +48,7 @@ run_case() {
 
 while [[ "$(date +%s)" -lt "$END_EPOCH" ]]; do
   run_case "$PERCEPTION_BIN" "PerceptionNodeTest.SingleSideDropoutTriggersExtrapolationAndThenRecovers"
-  run_case "$LIFECYCLE_BIN" "LifecycleNodeTest.EstopSwitchesIdleSpinningModeAndRecoversToNormal"
-  run_case "$BEHAVIOR_BIN" "BehaviorNodeTest.IdleSpinningModeBlocksNewGoalAndKeepsRecoveredContext"
+  run_case "$BEHAVIOR_BIN" "BehaviorTreeNodeTest.TriggeredTickFailsWithoutPose"
 done
 
 python3 - "$CSV_FILE" "$REPORT_FILE" "$MINUTES" << 'PY'

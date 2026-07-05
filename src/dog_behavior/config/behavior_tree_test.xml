@@ -1,7 +1,6 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <Sequence>
-      <CheckSystemMode mode="{system_mode}" expected_mode="normal"/>
       <WaitForPose has_pose="{has_current_pose}" timeout_ms="5000"/>
     </Sequence>
   </BehaviorTree>

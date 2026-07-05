@@ -28,11 +28,6 @@ flowchart TD
   F --> G[/dog/global_pose/]
   F --> H[Blackboard.current_pose]
 
-  I[/lifecycle/system_mode/] --> J[BehaviorTreeNode::systemModeCallback]
-  K[/lifecycle/recovery_context/] --> L[BehaviorTreeNode::recoveryContextCallback]
-  J --> M[Blackboard.system_mode]
-  L --> N[Blackboard.recovery_context]
-
   O[ExecuteBehaviorAction] --> P[/behavior/execute Action Client]
   Q[NavigateWaypointAction] --> R[/behavior/nav_execute Action Client]
   Q --> S[/behavior/nav_exec_state Topic]
@@ -54,8 +49,7 @@ flowchart TD
 
 1. [src/dog_behavior/include/dog_behavior/behavior_tree_node.hpp](../src/dog_behavior/include/dog_behavior/behavior_tree_node.hpp)
 2. [src/dog_behavior/include/dog_behavior/common/payload_utils.hpp](../src/dog_behavior/include/dog_behavior/common/payload_utils.hpp)
-3. [src/dog_behavior/include/dog_behavior/bt_nodes/check_system_mode.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/check_system_mode.hpp)
-4. [src/dog_behavior/include/dog_behavior/bt_nodes/wait_for_pose_condition.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/wait_for_pose_condition.hpp)
+3. [src/dog_behavior/include/dog_behavior/bt_nodes/wait_for_pose_condition.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/wait_for_pose_condition.hpp)
 5. [src/dog_behavior/include/dog_behavior/bt_nodes/select_waypoint_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/select_waypoint_action.hpp)
 6. [src/dog_behavior/include/dog_behavior/bt_nodes/execute_behavior_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/execute_behavior_action.hpp)
 7. [src/dog_behavior/include/dog_behavior/bt_nodes/navigate_to_pose_action.hpp](../src/dog_behavior/include/dog_behavior/bt_nodes/navigate_to_pose_action.hpp)
@@ -72,8 +66,7 @@ flowchart TD
 1. [src/dog_behavior/src/behavior_tree_node.cpp](../src/dog_behavior/src/behavior_tree_node.cpp)
 2. [src/dog_behavior/src/behavior_tree_main.cpp](../src/dog_behavior/src/behavior_tree_main.cpp)
 3. [src/dog_behavior/src/common/payload_utils.cpp](../src/dog_behavior/src/common/payload_utils.cpp)
-4. [src/dog_behavior/src/bt_nodes/check_system_mode.cpp](../src/dog_behavior/src/bt_nodes/check_system_mode.cpp)
-5. [src/dog_behavior/src/bt_nodes/wait_for_pose_condition.cpp](../src/dog_behavior/src/bt_nodes/wait_for_pose_condition.cpp)
+4. [src/dog_behavior/src/bt_nodes/wait_for_pose_condition.cpp](../src/dog_behavior/src/bt_nodes/wait_for_pose_condition.cpp)
 6. [src/dog_behavior/src/bt_nodes/select_waypoint_action.cpp](../src/dog_behavior/src/bt_nodes/select_waypoint_action.cpp)
 7. [src/dog_behavior/src/bt_nodes/execute_behavior_action.cpp](../src/dog_behavior/src/bt_nodes/execute_behavior_action.cpp)
 8. [src/dog_behavior/src/bt_nodes/navigate_to_pose_action.cpp](../src/dog_behavior/src/bt_nodes/navigate_to_pose_action.cpp)
@@ -110,8 +103,7 @@ flowchart TD
 
 1. [src/dog_behavior/test/test_behavior_tree_node.cpp](../src/dog_behavior/test/test_behavior_tree_node.cpp)
 2. [src/dog_behavior/test/test_payload_utils.cpp](../src/dog_behavior/test/test_payload_utils.cpp)
-3. [src/dog_behavior/test/test_check_system_mode.cpp](../src/dog_behavior/test/test_check_system_mode.cpp)
-4. [src/dog_behavior/test/test_wait_for_pose_condition.cpp](../src/dog_behavior/test/test_wait_for_pose_condition.cpp)
+3. [src/dog_behavior/test/test_wait_for_pose_condition.cpp](../src/dog_behavior/test/test_wait_for_pose_condition.cpp)
 5. [src/dog_behavior/test/test_select_waypoint_action.cpp](../src/dog_behavior/test/test_select_waypoint_action.cpp)
 6. [src/dog_behavior/test/test_execute_behavior_action.cpp](../src/dog_behavior/test/test_execute_behavior_action.cpp)
 7. [src/dog_behavior/test/test_navigate_to_pose_action.cpp](../src/dog_behavior/test/test_navigate_to_pose_action.cpp)
@@ -136,23 +128,21 @@ flowchart TD
 1. 从 `behavior_tree.xml` 加载 BT，并注册所有内建叶子节点。
 2. 订阅里程计并发布 `/dog/global_pose`，同时维护 `current_pose` 黑板数据。
 3. 订阅 `/behavior/execute_trigger`，支持手动重触发；默认 `auto_start=true` 启动后自动开始 tick，无需外部触发。
-4. 订阅 `/lifecycle/system_mode` 与 `/lifecycle/recovery_context`，将结果写入黑板。
-5. 通过 `bt_tick_period_ms` 定时 `tickRoot()`，并在树终态（SUCCESS/FAILURE）后停止 tick。
-6. 初始化并维护放置链路所需黑板键（counter、箱体计数、航点 goal 等）。
-7. 支持通过 `tree_xml_file_path` 参数切换行为树；launch 在 `test_mode=true` 时切到测试树。
+4. 通过 `bt_tick_period_ms` 定时 `tickRoot()`，并在树终态（SUCCESS/FAILURE）后停止 tick。
+5. 初始化并维护放置链路所需黑板键（counter、箱体计数、航点 goal 等）。
+6. 支持通过 `tree_xml_file_path` 参数切换行为树；launch 在 `test_mode=true` 时切到测试树。
 
 关键约束：
 
 1. 只有 `tree_active_ == true` 才执行 tick；`auto_start=true`（默认）意味着启动后自动进入激活状态。
 2. odom 转发前必须通过 `isFinitePose` 与 `hasValidQuaternionNorm` 校验。
-3. 系统模式从 `mode=...` 协议字段提取并归一化。
+3. 行为树首个运行前置条件是 `WaitForPose`，未收到定位输入时不会进入后续动作。
 
 ### 3.2 BT 叶子节点
 
 条件节点：
 
-1. `CheckSystemMode`：比较 `mode` 与 `expected_mode`（归一化后匹配）。
-2. `WaitForPoseCondition`：检查 `has_pose`；未收到 pose 时在 `timeout_ms` 内返回 RUNNING，超时后返回 FAILURE，避免触发早于定位输入时立即中止整棵树。
+1. `WaitForPoseCondition`：检查 `has_pose`；未收到 pose 时在 `timeout_ms` 内返回 RUNNING，超时后返回 FAILURE，避免触发早于定位输入时立即中止整棵树。
 
 执行节点：
 
@@ -186,7 +176,7 @@ flowchart TD
 说明：
 
 1. `percentDecode` 是内部实现细节，不对外暴露。
-2. 所有生命周期/恢复字符串协议建议统一经该工具处理。
+2. 行为侧 key=value 字符串协议建议统一经该工具处理。
 
 ---
 
@@ -198,8 +188,6 @@ flowchart TD
 
 1. `/aft_mapped_to_init`（可配）`nav_msgs/msg/Odometry`
 2. `/behavior/execute_trigger`（可配，`auto_start=true` 时可选）`std_msgs/msg/String`
-3. `/lifecycle/recovery_context`（可配）`std_msgs/msg/String`
-4. `/lifecycle/system_mode`（可配）`std_msgs/msg/String`
 
 发布：
 
@@ -244,8 +232,7 @@ Topic：
 
 当前关键字段：
 
-1. `mode`：系统模式字段（如 `mode=normal` / `mode=idle_spinning`）。
-2. `target_state`：完成态判定（`done/completed/succeeded/success/finished`）。
+1. `target_state`：完成态判定（`done/completed/succeeded/success/finished`）。
 
 放置链路 payload（由 `PlaceIndexAction` 生成）：
 
@@ -262,13 +249,11 @@ Topic：
 2. `localization_topic` = `/aft_mapped_to_init`
 3. `default_frame_id` = `base_link`
 4. `execute_behavior_trigger_topic` = `/behavior/execute_trigger`
-5. `recovery_context_topic` = `/lifecycle/recovery_context`
-6. `system_mode_topic` = `/lifecycle/system_mode`
-7. `match_type` = `left`（仅允许 `left|right`，非法值回退 `left`）
-8. `tree_xml_file_path` = `<share>/config/behavior_tree.xml`
-9. `bt_tick_period_ms` = `100`
-10. `auto_start` = `true` — 启动后是否自动开始 tick，设为 false 则需手动发 `/behavior/execute_trigger`
-11. `waypoints_file` = `""`
+5. `match_type` = `left`（仅允许 `left|right`，非法值回退 `left`）
+6. `tree_xml_file_path` = `<share>/config/behavior_tree.xml`
+7. `bt_tick_period_ms` = `100`
+8. `auto_start` = `true` — 启动后是否自动开始 tick，设为 false 则需手动发 `/behavior/execute_trigger`
+9. `waypoints_file` = `""`
 
 注意：当前 `dog_behavior/launch/launch.py` 没有声明或透传 `auto_start`，通过统一 launch 启动时不能直接使用 `auto_start:=false`。
 
@@ -298,7 +283,7 @@ Topic：
 
 ### 7.1 BehaviorTreeNode 黑板初始化键
 
-1. `system_mode`、`match_type`、`recovery_context`、`behavior_name`
+1. `match_type`、`behavior_name`
 2. `has_current_pose`、`current_pose`
 3. `counter`（初值 -1）
 4. `food_box_count`、`tool_box_count`、`instrument_box_count`、`medical_box_count`
@@ -311,11 +296,10 @@ Topic：
 
 1. `TickCountForTest()`：累计 tick 次数。
 2. `LastTickStatusForTest()`：`idle|running|success|failure`。
-3. `SystemModeForTest()`：解析后的 mode。
-4. `BehaviorNameForTest()`：最近触发行为名。
-5. `HasLatestPoseForTest()`：是否已有有效 pose。
-6. `IsTreeActiveForTest()`：当前是否处于执行状态。
-7. `WaypointCountForTest()`：已加载航点数量。
+3. `BehaviorNameForTest()`：最近触发行为名。
+4. `HasLatestPoseForTest()`：是否已有有效 pose。
+5. `IsTreeActiveForTest()`：当前是否处于执行状态。
+6. `WaypointCountForTest()`：已加载航点数量。
 
 ---
 
@@ -323,14 +307,13 @@ Topic：
 
 主树 `MainTree`：
 
-1. `CheckSystemMode(mode=normal)`
-2. `WaitForPose`
-3. `SetBoxesTypeAction`
-4. 导航到 `WayPointGoal1 -> WayPointGoal2 -> WayPointGoal3`
-5. `PublishMathAnswerAction`
-6. `ExecuteBehaviorAction(behavior_name=PickUpBoxes)`
-7. `PlaceAtGoal` 子树正序：`PlaceGoal1 -> PlaceGoal2 -> PlaceGoal3 -> PlaceGoal4`
-8. 导航到 `WayPointGoal4`
+1. `WaitForPose`
+2. `SetBoxesTypeAction`
+3. 导航到 `WayPointGoal1 -> WayPointGoal2 -> WayPointGoal3`
+4. `PublishMathAnswerAction`
+5. `ExecuteBehaviorAction(behavior_name=PickUpBoxes)`
+6. `PlaceAtGoal` 子树正序：`PlaceGoal1 -> PlaceGoal2 -> PlaceGoal3 -> PlaceGoal4`
+7. 导航到 `WayPointGoal4`
 9. `ExecuteBehaviorAction(behavior_name=PickUpBoxes)`
 10. `PlaceAtGoal` 子树逆序：`PlaceGoal4 -> PlaceGoal3 -> PlaceGoal2 -> PlaceGoal1`
 
@@ -359,12 +342,11 @@ Topic：
 
 运行语义：
 
-1. 保留 `CheckSystemMode` 与 `WaitForPose`，仍要求 lifecycle mode 为 normal 且已有 point_lio 里程计位姿。
+1. 保留 `WaitForPose`，仍要求已有 point_lio 里程计位姿。
 2. 保留所有 `NavigateWaypointAction`，继续向 `/behavior/nav_execute` 发送目标；目标点串口节点仍等待 `RCArrivalMX`。
 3. 不包含 `SetBoxesTypeAction` 与 `PublishMathAnswerAction`，因此不等待 `/target/target_3d`、不触发 YOLO/视觉识别。
 4. 两次抓取与每个放置步骤使用 `AutoSuccessAction`，只记录 `test_mode_auto_success` 日志并返回 SUCCESS。
 5. launch 在 `test_mode=true` 时不启动 `dog_perception_node`、`dog_perception_camera_node`、`dog_serial_bridge_node`，但仍允许启动 Livox、point_lio 与 `dog_serial_bridge_nav_telemetry_node`。
-6. launch 在 `test_mode=true` 时将 `dog_lifecycle_node.heartbeat_timeout_ms` 设为 `600000`，避免无视觉帧时过早降级。
 
 推荐命令：
 
@@ -385,10 +367,9 @@ ros2 launch dog_behavior launch.py test_mode:=true use_livox:=true livox_model:=
 
 当前 gtest 目标共 15 个：
 
-1. `test_behavior_tree_node`：主节点参数、触发执行、模式阻断、XML 结构回归检查。
+1. `test_behavior_tree_node`：主节点参数、触发执行、无 pose 失败路径、XML 结构回归检查。
 2. `test_payload_utils`：字符串协议解析、完成态判定、pose 有效性校验。
-3. `test_check_system_mode`：模式匹配与不匹配路径。
-4. `test_wait_for_pose_condition`：有/无 pose 条件语义。
+3. `test_wait_for_pose_condition`：有/无 pose 条件语义。
 5. `test_select_waypoint_action`：航点输出与索引轮转。
 6. `test_execute_behavior_action`：`ExecuteBehavior` 异步动作成功路径。
 7. `test_navigate_waypoint_action`：串口目标点导航叶子成功路径（测试源文件仍为 `test_navigate_to_pose_action.cpp`）。

@@ -61,10 +61,6 @@ SerialBridgeNode::SerialBridgeNode(
   declareParameters();
   loadParameters();
 
-  grasp_feedback_pub_ = create_publisher<std_msgs::msg::String>(
-    "/behavior/grasp_feedback",
-    rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable));
-
   using namespace std::placeholders;
   execute_server_ = rclcpp_action::create_server<ExecuteBehavior>(
     this,
@@ -418,10 +414,6 @@ void SerialBridgeNode::executePickupGoal(const std::shared_ptr<ExecuteGoalHandle
 
   const auto wait_result = waitForTransaction(TransactionKind::kExecuteBehavior);
   if (wait_result.outcome == TransactionOutcome::kPickSuccess) {
-    auto feedback = std_msgs::msg::String();
-    feedback.data = buildPickupFeedback(wait_result.pickup_sequence, true);
-    grasp_feedback_pub_->publish(feedback);
-
     auto result = std::make_shared<ExecuteBehavior::Result>();
     result->accepted = true;
     result->detail = "pick_success";
@@ -430,10 +422,6 @@ void SerialBridgeNode::executePickupGoal(const std::shared_ptr<ExecuteGoalHandle
   }
 
   if (wait_result.outcome == TransactionOutcome::kPickFail) {
-    auto feedback = std_msgs::msg::String();
-    feedback.data = buildPickupFeedback(wait_result.pickup_sequence, false);
-    grasp_feedback_pub_->publish(feedback);
-
     auto result = std::make_shared<ExecuteBehavior::Result>();
     result->accepted = false;
     result->detail = "pick_fail";

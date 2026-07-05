@@ -9,7 +9,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 
 #include "dog_perception/target_3d_solver.hpp"
@@ -56,15 +55,9 @@ public:
   /// @brief 获取从外推恢复到同步求解的次数。
   /// @return 外推恢复计数。
   size_t getExtrapolationRecoveryCount() const;
-  /// @brief 获取进入空转模式的事件数量。
-  /// @return 空转触发计数。
-  size_t getIdleSpinningTriggerCount() const;
   /// @brief 报告运行时 QoS 兼容状态。
   /// @return 当运行时发布端匹配配置的 QoS 可靠性时返回 true。
   bool isQosCompatible() const;
-  /// @brief 报告生命周期模式是否为空转/降级。
-  /// @return 节点处于空转模式时返回 true。
-  bool isIdleSpinningMode() const;
   /// @brief 计算求解执行时延的 p95（毫秒）。
   /// @return P95 时延。
   double getLatencyP95Ms() const;
@@ -119,10 +112,7 @@ private:
   /// @brief 跟踪最新点云时间戳与接收时间。
   /// @param pointcloud_msg 输入点云消息。
   void pointcloudStampCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_msg);
-  /// @brief 处理来自生命周期节点的模式变化。
-  /// @param msg 生命周期模式负载。
-  void lifecycleModeCallback(const std_msgs::msg::String::ConstSharedPtr & msg);
-  /// @brief 用于掉流外推和空转发布的周期性看门狗。
+  /// @brief 用于掉流外推的周期性看门狗。
   void watchdogCallback();
   /// @brief 判断当前流状态下是否应触发外推。
   /// @param current_time 当前节点时间。
@@ -134,9 +124,6 @@ private:
   /// @param reason 触发原因标记。
   /// @return 外推目标发布成功时返回 true。
   bool publishExtrapolatedTarget(const rclcpp::Time & current_time, const std::string & reason);
-  /// @brief 在空转模式发布占位目标位姿。
-  /// @param current_time 发布时间戳。
-  void publishIdleSpinningPose(const rclcpp::Time & current_time);
   /// @brief 运行数字识别器并发布数字结果目标。
   /// @param image_msg 输入图像消息。
   void processDigitRecognition(const sensor_msgs::msg::Image::ConstSharedPtr & image_msg);
@@ -177,11 +164,9 @@ private:
   int extrapolation_watchdog_ms_;
   int extrapolation_max_window_ms_;
   int extrapolation_min_interval_ms_;
-  int idle_spinning_publish_ms_;
   std::string qos_reliability_;
   std::string solver_type_;
   std::string digit_recognizer_type_;
-  std::string lifecycle_mode_topic_;
   std::string extrinsics_yaml_path_;
   int digit_roi_x_;
   int digit_roi_y_;
@@ -200,27 +185,21 @@ private:
   std::vector<std::string> box_class_names_;
   CameraExtrinsics camera_extrinsics_;
   bool qos_compatible_;
-  bool idle_spinning_mode_;
   bool extrapolation_active_;
   bool has_last_image_stamp_;
   bool has_last_pointcloud_stamp_;
   bool has_last_extrapolation_pub_time_;
-  bool has_last_idle_publish_time_;
-  bool has_mode_enter_time_;
   size_t dropped_frame_count_;
   size_t solved_frame_count_;
   size_t solve_failure_count_;
   size_t extrapolation_trigger_count_;
   size_t extrapolation_recovery_count_;
-  size_t idle_spinning_trigger_count_;
 
   rclcpp::Time last_image_stamp_;
   rclcpp::Time last_pointcloud_stamp_;
   rclcpp::Time last_image_receive_time_;
   rclcpp::Time last_pointcloud_receive_time_;
   rclcpp::Time last_extrapolation_pub_time_;
-  rclcpp::Time last_idle_publish_time_;
-  rclcpp::Time mode_enter_time_;
 
   boost::circular_buffer<FrameState> frame_history_;
   boost::circular_buffer<PoseState> pose_history_;
@@ -239,7 +218,6 @@ private:
   std::unique_ptr<message_filters::Synchronizer<SyncPolicy>> synchronizer_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_stamp_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_stamp_sub_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lifecycle_mode_sub_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
   rclcpp::Publisher<dog_interfaces::msg::Target3DArray>::SharedPtr target3d_pub_;

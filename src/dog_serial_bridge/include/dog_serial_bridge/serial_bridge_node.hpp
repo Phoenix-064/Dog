@@ -6,7 +6,6 @@
 #include <dog_interfaces/action/place_boxes.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
-#include <std_msgs/msg/string.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -115,7 +114,6 @@ private:
   int ack_timeout_ms_;
   int feedback_period_ms_;
 
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr grasp_feedback_pub_;
   rclcpp_action::Server<ExecuteBehavior>::SharedPtr execute_server_;
   rclcpp_action::Server<PlaceBoxes>::SharedPtr place_server_;
   rclcpp::TimerBase::SharedPtr feedback_timer_;

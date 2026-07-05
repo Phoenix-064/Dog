@@ -17,7 +17,7 @@ using dog_behavior::utils::parseKeyValuePayload;
 
 TEST(PayloadUtilsTest, NormalizeTokenRemovesWhitespaceAndLowercases)
 {
-  EXPECT_EQ(normalizeToken("  IDLE_ SpInNing \t\n"), "idle_spinning");
+  EXPECT_EQ(normalizeToken("  MiXeD_ Token \t\n"), "mixed_token");
 }
 
 TEST(PayloadUtilsTest, ParseKeyValuePayloadMatchesNormalizedKey)

@@ -1,7 +1,6 @@
 #include "dog_behavior/behavior_tree_node.hpp"
 
 #include "dog_behavior/bt_nodes/auto_success_action.hpp"
-#include "dog_behavior/bt_nodes/check_system_mode.hpp"
 #include "dog_behavior/bt_nodes/advance_place_counter_action.hpp"
 #include "dog_behavior/bt_nodes/execute_place_boxes_action.hpp"
 #include "dog_behavior/bt_nodes/execute_behavior_action.hpp"
@@ -95,7 +94,6 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
 , tree_active_(false)
 , ros_node_seeded_(false)
 , tick_count_(0)
-, system_mode_("normal")
 , last_tick_status_("idle")
 {
   auto_start_ = declare_parameter<bool>("auto_start", true);
@@ -108,10 +106,6 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
   execute_behavior_trigger_topic_ = declare_parameter<std::string>(
     "execute_behavior_trigger_topic",
     "/behavior/execute_trigger");
-  recovery_context_topic_ = declare_parameter<std::string>(
-    "recovery_context_topic",
-    "/lifecycle/recovery_context");
-  system_mode_topic_ = declare_parameter<std::string>("system_mode_topic", "/lifecycle/system_mode");
   match_type_ = utils::normalizeToken(declare_parameter<std::string>("match_type", "left"));
   if (match_type_ != "left" && match_type_ != "right") {
     RCLCPP_WARN(get_logger(), "Invalid match_type=%s, fallback to left", match_type_.c_str());
@@ -152,24 +146,8 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
     rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::Reliable),
     std::bind(&BehaviorTreeNode::executeTriggerCallback, this, std::placeholders::_1));
 
-  recovery_context_sub_ = create_subscription<std_msgs::msg::String>(
-    recovery_context_topic_,
-    rclcpp::QoS(rclcpp::KeepLast(1))
-    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-    .durability(rclcpp::DurabilityPolicy::TransientLocal),
-    std::bind(&BehaviorTreeNode::recoveryContextCallback, this, std::placeholders::_1));
-
-  system_mode_sub_ = create_subscription<std_msgs::msg::String>(
-    system_mode_topic_,
-    rclcpp::QoS(rclcpp::KeepLast(1))
-    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-    .durability(rclcpp::DurabilityPolicy::TransientLocal),
-    std::bind(&BehaviorTreeNode::systemModeCallback, this, std::placeholders::_1));
-
   blackboard_ = BT::Blackboard::create();
-  blackboard_->set("system_mode", system_mode_);
   blackboard_->set("match_type", match_type_);
-  blackboard_->set("recovery_context", std::string(""));
   blackboard_->set("behavior_name", std::string("auto_start"));
   blackboard_->set("has_current_pose", false);
   blackboard_->set("counter", -1);
@@ -217,10 +195,22 @@ BehaviorTreeNode::BehaviorTreeNode(const rclcpp::NodeOptions & options)
     waypoints_.size());
 }
 
+BehaviorTreeNode::~BehaviorTreeNode()
+{
+  if (tick_timer_) {
+    tick_timer_->cancel();
+  }
+  tick_timer_.reset();
+  tree_ = BT::Tree();
+  blackboard_.reset();
+  global_pose_pub_.reset();
+  execute_trigger_sub_.reset();
+  odom_sub_.reset();
+}
+
 void BehaviorTreeNode::registerBuiltinNodes()
 {
   factory_.registerNodeType<bt_nodes::AutoSuccessAction>("AutoSuccessAction");
-  factory_.registerNodeType<bt_nodes::CheckSystemMode>("CheckSystemMode");
   factory_.registerNodeType<bt_nodes::WaitForPoseCondition>("WaitForPose");
   factory_.registerNodeType<bt_nodes::SelectWaypointAction>("SelectWaypoint");
   factory_.registerNodeType<bt_nodes::ExecuteBehaviorAction>("ExecuteBehaviorAction");
@@ -251,15 +241,14 @@ void BehaviorTreeNode::configureTree()
 void BehaviorTreeNode::timerCallback()
 {
   if (!ros_node_seeded_) {
-    blackboard_->set("ros_node", std::static_pointer_cast<rclcpp::Node>(shared_from_this()));
+    auto * node_ptr = static_cast<rclcpp::Node *>(this);
+    blackboard_->set("ros_node", rclcpp::Node::SharedPtr(node_ptr, [](rclcpp::Node *) {}));
     ros_node_seeded_ = true;
   }
 
   bool should_tick = false;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    blackboard_->set("system_mode", system_mode_);
-    blackboard_->set("recovery_context", recovery_context_payload_);
     blackboard_->set("behavior_name", behavior_name_);
     blackboard_->set("has_current_pose", has_latest_pose_);
     if (has_latest_pose_) {
@@ -370,31 +359,6 @@ void BehaviorTreeNode::executeTriggerCallback(const std_msgs::msg::String::Const
     behavior_name_.c_str());
 }
 
-void BehaviorTreeNode::systemModeCallback(const std_msgs::msg::String::ConstSharedPtr msg)
-{
-  if (!msg) {
-    return;
-  }
-
-  const auto mode = utils::normalizeToken(utils::parseKeyValuePayload(msg->data, "mode"));
-  if (mode.empty()) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  system_mode_ = mode;
-}
-
-void BehaviorTreeNode::recoveryContextCallback(const std_msgs::msg::String::ConstSharedPtr msg)
-{
-  if (!msg) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  recovery_context_payload_ = msg->data;
-}
-
 void BehaviorTreeNode::loadWaypoints(const std::string & file_path)
 {
   try {
@@ -431,12 +395,6 @@ std::string BehaviorTreeNode::LastTickStatusForTest() const
 {
   std::lock_guard<std::mutex> lock(state_mutex_);
   return last_tick_status_;
-}
-
-std::string BehaviorTreeNode::SystemModeForTest() const
-{
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  return system_mode_;
 }
 
 std::string BehaviorTreeNode::BehaviorNameForTest() const

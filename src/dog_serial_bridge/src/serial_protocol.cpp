@@ -119,9 +119,4 @@ ReplyType classifyReply(const std::string & line)
   return ReplyType::kUnknown;
 }
 
-std::string buildPickupFeedback(const uint64_t sequence, const bool success)
-{
-  return "pickup_" + std::to_string(sequence) + (success ? "|success" : "|empty_grasp");
-}
-
 }  // namespace dog_serial_bridge
