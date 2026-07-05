@@ -34,6 +34,10 @@ void SystemSerialConnection::close()
 {
 }
 
+void SystemSerialConnection::clearReadBuffer()
+{
+}
+
 bool SystemSerialConnection::write(const std::string & data, std::string & error)
 {
   (void)data;
@@ -45,6 +49,15 @@ SerialConnection::ReadResult SystemSerialConnection::readLine(std::chrono::milli
 {
   (void)timeout;
   ReadResult result;
+  result.status = ReadStatus::kClosed;
+  result.error = "serial_not_open";
+  return result;
+}
+
+SerialConnection::ByteReadResult SystemSerialConnection::readBytes(std::chrono::milliseconds timeout)
+{
+  (void)timeout;
+  ByteReadResult result;
   result.status = ReadStatus::kClosed;
   result.error = "serial_not_open";
   return result;
@@ -66,6 +79,8 @@ namespace dog_serial_bridge
 
 namespace
 {
+
+constexpr size_t kMaxBufferedBytes = 4096U;
 
 speed_t toBaudRate(const int baud_rate)
 {
@@ -169,6 +184,12 @@ void SystemSerialConnection::close()
   buffered_data_.clear();
 }
 
+void SystemSerialConnection::clearReadBuffer()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  buffered_data_.clear();
+}
+
 bool SystemSerialConnection::write(const std::string & data, std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -219,6 +240,7 @@ SerialConnection::ReadResult SystemSerialConnection::readLine(std::chrono::milli
   const int poll_result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
   if (poll_result == 0) {
     result.status = ReadStatus::kTimeout;
+    result.partial_data = buffered_data_;
     return result;
   }
   if (poll_result < 0) {
@@ -256,13 +278,83 @@ SerialConnection::ReadResult SystemSerialConnection::readLine(std::chrono::milli
   buffered_data_.append(buffer, static_cast<size_t>(bytes_read));
   const auto new_delimiter_pos = buffered_data_.find(delimiter_);
   if (new_delimiter_pos == std::string::npos) {
+    if (buffered_data_.size() > kMaxBufferedBytes) {
+      result.status = ReadStatus::kError;
+      result.error = "serial_line_buffer_overflow";
+      result.partial_data = buffered_data_;
+      buffered_data_.clear();
+      return result;
+    }
     result.status = ReadStatus::kTimeout;
+    result.partial_data = buffered_data_;
     return result;
   }
 
   result.status = ReadStatus::kLine;
   result.line = buffered_data_.substr(0, new_delimiter_pos + 1U);
   buffered_data_.erase(0, new_delimiter_pos + 1U);
+  return result;
+}
+
+SerialConnection::ByteReadResult SystemSerialConnection::readBytes(std::chrono::milliseconds timeout)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  ByteReadResult result;
+  if (fd_ < 0) {
+    result.status = ReadStatus::kClosed;
+    result.error = "serial_not_open";
+    return result;
+  }
+
+  if (!buffered_data_.empty()) {
+    result.status = ReadStatus::kLine;
+    result.data.swap(buffered_data_);
+    return result;
+  }
+
+  pollfd pfd{};
+  pfd.fd = fd_;
+  pfd.events = POLLIN;
+  const int poll_result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
+  if (poll_result == 0) {
+    result.status = ReadStatus::kTimeout;
+    return result;
+  }
+  if (poll_result < 0) {
+    if (errno == EINTR) {
+      result.status = ReadStatus::kTimeout;
+      return result;
+    }
+    result.status = ReadStatus::kError;
+    result.error = errnoText("poll_failed");
+    return result;
+  }
+  if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+    result.status = ReadStatus::kClosed;
+    result.error = "serial_closed";
+    return result;
+  }
+
+  char buffer[256];
+  const auto bytes_read = ::read(fd_, buffer, sizeof(buffer));
+  if (bytes_read < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+      result.status = ReadStatus::kTimeout;
+      return result;
+    }
+    result.status = ReadStatus::kError;
+    result.error = errnoText("read_failed");
+    return result;
+  }
+  if (bytes_read == 0) {
+    result.status = ReadStatus::kClosed;
+    result.error = "serial_closed";
+    return result;
+  }
+
+  result.status = ReadStatus::kLine;
+  result.data.assign(buffer, static_cast<size_t>(bytes_read));
   return result;
 }
 

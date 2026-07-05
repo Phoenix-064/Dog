@@ -1,5 +1,6 @@
 #include "dog_serial_bridge/serial_protocol.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -117,6 +118,32 @@ ReplyType classifyReply(const std::string & line)
     return ReplyType::kOk;
   }
   return ReplyType::kUnknown;
+}
+
+bool containsArrivalReply(const std::string & bytes)
+{
+  return bytes.find(kArrivalReply) != std::string::npos;
+}
+
+size_t eraseCompleteDebugFrames(std::string & bytes)
+{
+  constexpr size_t kDebugFrameSize = 36U;
+  const std::string tail(
+    reinterpret_cast<const char *>(kDebugFrameTail),
+    reinterpret_cast<const char *>(kDebugFrameTail) + 4U);
+
+  size_t erased_count = 0U;
+  size_t tail_pos = bytes.find(tail);
+  while (tail_pos != std::string::npos) {
+    if (tail_pos + tail.size() < kDebugFrameSize) {
+      break;
+    }
+    const size_t frame_start = tail_pos + tail.size() - kDebugFrameSize;
+    bytes.erase(frame_start, kDebugFrameSize);
+    ++erased_count;
+    tail_pos = bytes.find(tail);
+  }
+  return erased_count;
 }
 
 }  // namespace dog_serial_bridge

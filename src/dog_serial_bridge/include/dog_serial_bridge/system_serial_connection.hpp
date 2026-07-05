@@ -17,8 +17,10 @@ public:
   bool open(const SerialConfig & config, std::string & error) override;
   bool isOpen() const override;
   void close() override;
+  void clearReadBuffer() override;
   bool write(const std::string & data, std::string & error) override;
   ReadResult readLine(std::chrono::milliseconds timeout) override;
+  ByteReadResult readBytes(std::chrono::milliseconds timeout) override;
 
 private:
   mutable std::mutex mutex_;

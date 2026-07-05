@@ -57,6 +57,7 @@ private:
   bool reserveGoalSlot();
   void releaseGoalSlot();
   bool waitForArrival(const std::chrono::steady_clock::time_point & deadline, std::string & detail);
+  bool sendCurrentPoseStopFrames(const std::string & event, const char * log_prefix, int repeat_count);
 
   std::shared_ptr<SerialConnection> serial_connection_;
   mutable std::mutex serial_mutex_;
@@ -71,11 +72,13 @@ private:
   mutable std::mutex pose_mutex_;
   PoseCache current_pose_;
   PoseCache last_goal_pose_;
-  uint64_t sequence_;
 
   std::mutex goal_mutex_;
   bool goal_reserved_;
   bool send_shutdown_arrival_on_exit_;
+  int shutdown_arrival_repeat_count_;
+  int timeout_stop_repeat_count_;
+  int timeout_stop_interval_ms_;
   bool shutdown_arrival_sent_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_sub_;

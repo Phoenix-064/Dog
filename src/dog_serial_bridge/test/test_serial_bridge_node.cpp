@@ -99,15 +99,15 @@ public:
   {
     std::unique_lock<std::mutex> lock(mutex_);
     if (!cv_.wait_for(lock, timeout, [&]() { return !open_ || !incoming_lines_.empty(); })) {
-      return ReadResult{ReadStatus::kTimeout, "", ""};
+      return ReadResult{ReadStatus::kTimeout, "", "", ""};
     }
     if (!open_) {
-      return ReadResult{ReadStatus::kClosed, "", "fake_closed"};
+      return ReadResult{ReadStatus::kClosed, "", "fake_closed", ""};
     }
 
     auto line = incoming_lines_.front();
     incoming_lines_.pop_front();
-    return ReadResult{ReadStatus::kLine, line, ""};
+    return ReadResult{ReadStatus::kLine, line, "", ""};
   }
 
   void enqueueIncomingLine(const std::string & line)
@@ -250,15 +250,6 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsOnPickSuccess)
   ASSERT_NE(goal_handle, nullptr);
 
   ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
-  EXPECT_EQ(fake_serial->writes().front(), "RCPickUpBoxes\n");
-
-  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
-    return state.feedback_states.size() >= 2U;
-  }));
-  EXPECT_EQ(state.feedback_states.front(), "waiting_pick_result");
-
-  fake_serial->enqueueIncomingLine("RCPickSuccess\n");
-
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return state.result_ready;
   }));
@@ -266,13 +257,14 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsOnPickSuccess)
   EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
   EXPECT_TRUE(state.wrapped_result.result->accepted);
-  EXPECT_EQ(state.wrapped_result.result->detail, "pick_success");
+  EXPECT_EQ(state.wrapped_result.result->detail, "command_sent");
+  EXPECT_EQ(fake_serial->writes().front(), "RCPickUpBoxes\r\n");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
 }
 
-TEST_F(SerialBridgeNodeTest, ExecuteBehaviorReturnsSucceededFalseOnPickFail)
+TEST_F(SerialBridgeNodeTest, ExecuteBehaviorIgnoresLegacyPickFailReply)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
@@ -294,17 +286,14 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorReturnsSucceededFalseOnPickFail)
   auto goal_handle = sendGoal<ExecuteBehavior>(executor, client, goal, state);
   ASSERT_NE(goal_handle, nullptr);
 
-  ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
-  fake_serial->enqueueIncomingLine("RCPickFail\n");
-
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return state.result_ready;
   }));
 
   EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
-  EXPECT_FALSE(state.wrapped_result.result->accepted);
-  EXPECT_EQ(state.wrapped_result.result->detail, "pick_fail");
+  EXPECT_TRUE(state.wrapped_result.result->accepted);
+  EXPECT_EQ(state.wrapped_result.result->detail, "command_sent");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
@@ -337,7 +326,7 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorRejectsUnsupportedBehavior)
   executor.remove_node(bridge_node);
 }
 
-TEST_F(SerialBridgeNodeTest, ExecuteBehaviorRejectsBusyGoal)
+TEST_F(SerialBridgeNodeTest, ExecuteBehaviorAcceptsSequentialGoalsWithoutAck)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
@@ -362,20 +351,19 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorRejectsBusyGoal)
 
   ActionCallState<ExecuteBehavior> second_state;
   auto second_goal_handle = sendGoal<ExecuteBehavior>(executor, client, goal, second_state);
-  EXPECT_EQ(second_goal_handle, nullptr);
+  ASSERT_NE(second_goal_handle, nullptr);
 
-  fake_serial->enqueueIncomingLine("RCPickSuccess\n");
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
-    return first_state.result_ready;
+    return first_state.result_ready && second_state.result_ready;
   }));
 
-  EXPECT_EQ(fake_serial->writes().size(), 1U);
+  EXPECT_EQ(fake_serial->writes().size(), 2U);
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
 }
 
-TEST_F(SerialBridgeNodeTest, ExecuteBehaviorAbortsOnTimeout)
+TEST_F(SerialBridgeNodeTest, ExecuteBehaviorSucceedsWithoutAck)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
@@ -397,14 +385,14 @@ TEST_F(SerialBridgeNodeTest, ExecuteBehaviorAbortsOnTimeout)
   auto goal_handle = sendGoal<ExecuteBehavior>(executor, client, goal, state);
   ASSERT_NE(goal_handle, nullptr);
 
-  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return state.result_ready;
   }));
 
-  EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
-  EXPECT_FALSE(state.wrapped_result.result->accepted);
-  EXPECT_EQ(state.wrapped_result.result->detail, "ack_timeout");
+  EXPECT_TRUE(state.wrapped_result.result->accepted);
+  EXPECT_EQ(state.wrapped_result.result->detail, "command_sent");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
@@ -469,11 +457,6 @@ TEST_F(SerialBridgeNodeTest, PlaceBoxesSucceedsAndIgnoresUnrelatedReplies)
   ASSERT_NE(goal_handle, nullptr);
 
   ASSERT_TRUE(fake_serial->waitForWriteCount(1U, std::chrono::milliseconds(500)));
-  EXPECT_EQ(fake_serial->writes().front(), "RCplace=0,3,count=3\n");
-
-  fake_serial->enqueueIncomingLine("RCPickSuccess\n");
-  fake_serial->enqueueIncomingLine("RCOK\n");
-
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return state.result_ready;
   }));
@@ -481,7 +464,8 @@ TEST_F(SerialBridgeNodeTest, PlaceBoxesSucceedsAndIgnoresUnrelatedReplies)
   EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
   EXPECT_TRUE(state.wrapped_result.result->accepted);
-  EXPECT_EQ(state.wrapped_result.result->detail, "place_ok");
+  EXPECT_EQ(state.wrapped_result.result->detail, "command_sent");
+  EXPECT_EQ(fake_serial->writes().front(), "RCplace=0,3,count=3\r\n");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
@@ -514,7 +498,7 @@ TEST_F(SerialBridgeNodeTest, PlaceBoxesRejectsInvalidPayload)
   executor.remove_node(bridge_node);
 }
 
-TEST_F(SerialBridgeNodeTest, PlaceBoxesRejectsBusyGoal)
+TEST_F(SerialBridgeNodeTest, PlaceBoxesAcceptsSequentialGoalsWithoutAck)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
@@ -539,18 +523,17 @@ TEST_F(SerialBridgeNodeTest, PlaceBoxesRejectsBusyGoal)
 
   ActionCallState<PlaceBoxes> second_state;
   auto second_goal_handle = sendGoal<PlaceBoxes>(executor, client, goal, second_state);
-  EXPECT_EQ(second_goal_handle, nullptr);
+  ASSERT_NE(second_goal_handle, nullptr);
 
-  fake_serial->enqueueIncomingLine("RCOK\n");
   ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
-    return first_state.result_ready;
+    return first_state.result_ready && second_state.result_ready;
   }));
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);
 }
 
-TEST_F(SerialBridgeNodeTest, PlaceBoxesAbortsOnTimeout)
+TEST_F(SerialBridgeNodeTest, PlaceBoxesSucceedsWithoutAck)
 {
   auto fake_serial = std::make_shared<FakeSerialConnection>(true);
   auto bridge_node = std::make_shared<dog_serial_bridge::SerialBridgeNode>(makeOptions(), fake_serial);
@@ -572,14 +555,14 @@ TEST_F(SerialBridgeNodeTest, PlaceBoxesAbortsOnTimeout)
   auto goal_handle = sendGoal<PlaceBoxes>(executor, client, goal, state);
   ASSERT_NE(goal_handle, nullptr);
 
-  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(1000), [&]() {
+  ASSERT_TRUE(waitUntil(executor, std::chrono::milliseconds(500), [&]() {
     return state.result_ready;
   }));
 
-  EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_EQ(state.wrapped_result.code, rclcpp_action::ResultCode::SUCCEEDED);
   ASSERT_TRUE(state.wrapped_result.result);
-  EXPECT_FALSE(state.wrapped_result.result->accepted);
-  EXPECT_EQ(state.wrapped_result.result->detail, "ack_timeout");
+  EXPECT_TRUE(state.wrapped_result.result->accepted);
+  EXPECT_EQ(state.wrapped_result.result->detail, "command_sent");
 
   executor.remove_node(client_node);
   executor.remove_node(bridge_node);

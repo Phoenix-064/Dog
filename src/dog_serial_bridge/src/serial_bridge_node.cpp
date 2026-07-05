@@ -152,11 +152,10 @@ void SerialBridgeNode::initializeSerial()
 
   RCLCPP_INFO(
     get_logger(),
-    "serial_ready port=%s baud=%d delimiter=%d",
+    "serial_ready port=%s baud=%d mode=write_only delimiter=%d",
     serial_config_.port.c_str(),
     serial_config_.baud_rate,
     static_cast<int>(serial_config_.line_delimiter));
-  startReaderThread();
 }
 
 void SerialBridgeNode::startReaderThread()
@@ -273,7 +272,7 @@ std::string SerialBridgeNode::appendConfiguredNewline(const std::string & frame)
   if (!write_newline_) {
     return frame;
   }
-  return frame + '\n';
+  return frame + "\r\n";
 }
 
 bool SerialBridgeNode::isSerialReady() const
@@ -382,13 +381,7 @@ void SerialBridgeNode::executePickupGoal(const std::shared_ptr<ExecuteGoalHandle
   }
 
   const auto pickup_sequence = next_pickup_sequence_.fetch_add(1U);
-  if (!beginPickupTransaction(goal_handle, pickup_sequence)) {
-    auto result = std::make_shared<ExecuteBehavior::Result>();
-    result->accepted = false;
-    result->detail = "transaction_begin_failed";
-    goal_handle->abort(result);
-    return;
-  }
+  (void)pickup_sequence;
 
   std::string error;
   const auto frame = appendConfiguredNewline(buildPickupCommand());
@@ -408,39 +401,28 @@ void SerialBridgeNode::executePickupGoal(const std::shared_ptr<ExecuteGoalHandle
       if (serial_connection_) {
         serial_connection_->close();
       }
-      failActiveTransaction(detail);
+      auto result = std::make_shared<ExecuteBehavior::Result>();
+      result->accepted = false;
+      result->detail = detail;
+      goal_handle->abort(result);
+      releaseReservation();
+      return;
     }
   }
 
-  const auto wait_result = waitForTransaction(TransactionKind::kExecuteBehavior);
-  if (wait_result.outcome == TransactionOutcome::kPickSuccess) {
-    auto result = std::make_shared<ExecuteBehavior::Result>();
-    result->accepted = true;
-    result->detail = "pick_success";
-    goal_handle->succeed(result);
-    return;
-  }
-
-  if (wait_result.outcome == TransactionOutcome::kPickFail) {
+  releaseReservation();
+  if (goal_handle->is_canceling()) {
     auto result = std::make_shared<ExecuteBehavior::Result>();
     result->accepted = false;
-    result->detail = "pick_fail";
-    goal_handle->succeed(result);
-    return;
-  }
-
-  if (wait_result.outcome == TransactionOutcome::kCanceled) {
-    auto result = std::make_shared<ExecuteBehavior::Result>();
-    result->accepted = false;
-    result->detail = wait_result.detail;
+    result->detail = "goal_canceled";
     goal_handle->canceled(result);
     return;
   }
 
   auto result = std::make_shared<ExecuteBehavior::Result>();
-  result->accepted = false;
-  result->detail = wait_result.detail;
-  goal_handle->abort(result);
+  result->accepted = true;
+  result->detail = "command_sent";
+  goal_handle->succeed(result);
 }
 
 void SerialBridgeNode::executePlaceGoal(
@@ -452,14 +434,6 @@ void SerialBridgeNode::executePlaceGoal(
     auto result = std::make_shared<PlaceBoxes::Result>();
     result->accepted = false;
     result->detail = "serial_not_ready";
-    goal_handle->abort(result);
-    return;
-  }
-
-  if (!beginPlaceTransaction(goal_handle)) {
-    auto result = std::make_shared<PlaceBoxes::Result>();
-    result->accepted = false;
-    result->detail = "transaction_begin_failed";
     goal_handle->abort(result);
     return;
   }
@@ -482,31 +456,28 @@ void SerialBridgeNode::executePlaceGoal(
       if (serial_connection_) {
         serial_connection_->close();
       }
-      failActiveTransaction(detail);
+      auto result = std::make_shared<PlaceBoxes::Result>();
+      result->accepted = false;
+      result->detail = detail;
+      goal_handle->abort(result);
+      releaseReservation();
+      return;
     }
   }
 
-  const auto wait_result = waitForTransaction(TransactionKind::kPlaceBoxes);
-  if (wait_result.outcome == TransactionOutcome::kOk) {
-    auto result = std::make_shared<PlaceBoxes::Result>();
-    result->accepted = true;
-    result->detail = "place_ok";
-    goal_handle->succeed(result);
-    return;
-  }
-
-  if (wait_result.outcome == TransactionOutcome::kCanceled) {
+  releaseReservation();
+  if (goal_handle->is_canceling()) {
     auto result = std::make_shared<PlaceBoxes::Result>();
     result->accepted = false;
-    result->detail = wait_result.detail;
+    result->detail = "goal_canceled";
     goal_handle->canceled(result);
     return;
   }
 
   auto result = std::make_shared<PlaceBoxes::Result>();
-  result->accepted = false;
-  result->detail = wait_result.detail;
-  goal_handle->abort(result);
+  result->accepted = true;
+  result->detail = "command_sent";
+  goal_handle->succeed(result);
 }
 
 bool SerialBridgeNode::reserveTransactionSlot()

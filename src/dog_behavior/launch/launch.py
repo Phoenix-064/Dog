@@ -126,6 +126,16 @@ def generate_launch_description() -> LaunchDescription:
     nav_telemetry_serial_port = LaunchConfiguration("nav_telemetry_serial_port")
     nav_telemetry_baud_rate = LaunchConfiguration("nav_telemetry_baud_rate")
     nav_telemetry_ack_timeout_ms = LaunchConfiguration("nav_telemetry_ack_timeout_ms")
+    nav_telemetry_read_line_delimiter = LaunchConfiguration("nav_telemetry_read_line_delimiter")
+    nav_telemetry_shutdown_arrival_repeat_count = LaunchConfiguration(
+        "nav_telemetry_shutdown_arrival_repeat_count"
+    )
+    nav_telemetry_timeout_stop_repeat_count = LaunchConfiguration(
+        "nav_telemetry_timeout_stop_repeat_count"
+    )
+    nav_telemetry_timeout_stop_interval_ms = LaunchConfiguration(
+        "nav_telemetry_timeout_stop_interval_ms"
+    )
     map_to_camera_x = LaunchConfiguration("map_to_camera_x")
     map_to_camera_y = LaunchConfiguration("map_to_camera_y")
     map_to_camera_z = LaunchConfiguration("map_to_camera_z")
@@ -223,8 +233,8 @@ def generate_launch_description() -> LaunchDescription:
 
     declare_nav_telemetry_serial_port = DeclareLaunchArgument(
         "nav_telemetry_serial_port",
-        default_value="/dev/ttyUSB1",
-        description="Serial port for navigation pose telemetry.",
+        default_value="/dev/ttyUSB0",
+        description="Serial port for navigation pose telemetry. Current UART8 protocol shares the behavior serial port.",
     )
 
     declare_nav_telemetry_baud_rate = DeclareLaunchArgument(
@@ -237,6 +247,30 @@ def generate_launch_description() -> LaunchDescription:
         "nav_telemetry_ack_timeout_ms",
         default_value="10000",
         description="Navigation arrival acknowledgement timeout in milliseconds.",
+    )
+
+    declare_nav_telemetry_read_line_delimiter = DeclareLaunchArgument(
+        "nav_telemetry_read_line_delimiter",
+        default_value="\\n",
+        description="Navigation serial reply line delimiter.",
+    )
+
+    declare_nav_telemetry_shutdown_arrival_repeat_count = DeclareLaunchArgument(
+        "nav_telemetry_shutdown_arrival_repeat_count",
+        default_value="3",
+        description="Number of shutdown arrival frames to send on test-mode exit.",
+    )
+
+    declare_nav_telemetry_timeout_stop_repeat_count = DeclareLaunchArgument(
+        "nav_telemetry_timeout_stop_repeat_count",
+        default_value="3",
+        description="Number of current-pose stop frames to send after navigation arrival timeout.",
+    )
+
+    declare_nav_telemetry_timeout_stop_interval_ms = DeclareLaunchArgument(
+        "nav_telemetry_timeout_stop_interval_ms",
+        default_value="20",
+        description="Interval between timeout stop frames in milliseconds.",
     )
 
     declare_map_to_camera_x = DeclareLaunchArgument(
@@ -336,9 +370,22 @@ def generate_launch_description() -> LaunchDescription:
             "serial_port": nav_telemetry_serial_port,
             "baud_rate": ParameterValue(nav_telemetry_baud_rate, value_type=int),
             "ack_timeout_ms": ParameterValue(nav_telemetry_ack_timeout_ms, value_type=int),
+            "read_line_delimiter": nav_telemetry_read_line_delimiter,
             "send_shutdown_arrival_on_exit": ParameterValue(
                 PythonExpression(["'", test_mode, "' == 'true'"]),
                 value_type=bool,
+            ),
+            "shutdown_arrival_repeat_count": ParameterValue(
+                nav_telemetry_shutdown_arrival_repeat_count,
+                value_type=int,
+            ),
+            "timeout_stop_repeat_count": ParameterValue(
+                nav_telemetry_timeout_stop_repeat_count,
+                value_type=int,
+            ),
+            "timeout_stop_interval_ms": ParameterValue(
+                nav_telemetry_timeout_stop_interval_ms,
+                value_type=int,
             ),
         }],
     )
@@ -387,6 +434,10 @@ def generate_launch_description() -> LaunchDescription:
         declare_nav_telemetry_serial_port,
         declare_nav_telemetry_baud_rate,
         declare_nav_telemetry_ack_timeout_ms,
+        declare_nav_telemetry_read_line_delimiter,
+        declare_nav_telemetry_shutdown_arrival_repeat_count,
+        declare_nav_telemetry_timeout_stop_repeat_count,
+        declare_nav_telemetry_timeout_stop_interval_ms,
         declare_map_to_camera_x,
         declare_map_to_camera_y,
         declare_map_to_camera_z,

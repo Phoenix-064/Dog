@@ -1,5 +1,6 @@
 #include "dog_serial_bridge/nav_telemetry_serial_node.hpp"
 
+#include "dog_serial_bridge/serial_protocol.hpp"
 #include "dog_serial_bridge/system_serial_connection.hpp"
 
 #include <algorithm>
@@ -19,15 +20,6 @@ namespace
 
 constexpr double kMetersToCentimeters = 100.0;
 constexpr double kRadiansToDegrees = 180.0 / 3.14159265358979323846;
-constexpr char kArrivalReply[] = "RCArrivalMX";
-
-std::string trimLine(std::string line)
-{
-  while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-    line.pop_back();
-  }
-  return line;
-}
 
 std::string escapeSerialPayload(const std::string & payload)
 {
@@ -78,51 +70,21 @@ double yawFromPose(const geometry_msgs::msg::Pose & pose)
   return std::atan2(siny_cosp, cosy_cosp);
 }
 
-bool isValidFrameChar(const char value)
-{
-  return (value >= 'a' && value <= 'z') ||
-         (value >= 'A' && value <= 'Z') ||
-         (value >= '0' && value <= '9') ||
-         value == '_' ||
-         value == '-' ||
-         value == '/';
-}
-
-std::string sanitizeFrameId(const std::string & frame_id)
-{
-  if (frame_id.empty()) {
-    return "unknown";
-  }
-
-  std::string sanitized;
-  sanitized.reserve(std::min<size_t>(frame_id.size(), 48U));
-  for (const char value : frame_id) {
-    sanitized.push_back(isValidFrameChar(value) ? value : '_');
-    if (sanitized.size() >= 48U) {
-      break;
-    }
-  }
-  return sanitized.empty() ? "unknown" : sanitized;
-}
-
 void appendPoseFields(
   std::ostringstream & stream,
   const char * prefix,
   const NavTelemetrySerialNode::PoseCache & cache)
 {
   stream << ';' << prefix << "_valid=" << (cache.valid ? 1 : 0);
-  stream << ';' << prefix << "_frame=" << sanitizeFrameId(cache.pose.header.frame_id);
   if (!cache.valid) {
     stream << ';' << prefix << "_x=0.000"
            << ';' << prefix << "_y=0.000"
-           << ';' << prefix << "_z=0.000"
            << ';' << prefix << "_yaw=0.000";
     return;
   }
 
   stream << ';' << prefix << "_x=" << cache.pose.pose.position.x * kMetersToCentimeters
          << ';' << prefix << "_y=" << cache.pose.pose.position.y * kMetersToCentimeters
-         << ';' << prefix << "_z=" << cache.pose.pose.position.z * kMetersToCentimeters
          << ';' << prefix << "_yaw=" << yawFromPose(cache.pose.pose) * kRadiansToDegrees;
 }
 
@@ -137,9 +99,11 @@ NavTelemetrySerialNode::NavTelemetrySerialNode(
 , write_newline_(true)
 , ack_timeout_ms_(10000)
 , reconnect_period_ms_(1000)
-, sequence_(0U)
 , goal_reserved_(false)
 , send_shutdown_arrival_on_exit_(false)
+, shutdown_arrival_repeat_count_(1)
+, timeout_stop_repeat_count_(3)
+, timeout_stop_interval_ms_(20)
 , shutdown_arrival_sent_(false)
 {
   declareParameters();
@@ -186,12 +150,15 @@ NavTelemetrySerialNode::~NavTelemetrySerialNode()
 
 void NavTelemetrySerialNode::declareParameters()
 {
-  declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
+  declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
   declare_parameter<int>("baud_rate", 115200);
   declare_parameter<int>("ack_timeout_ms", 10000);
   declare_parameter<int>("reconnect_period_ms", 1000);
   declare_parameter<bool>("write_newline", true);
   declare_parameter<bool>("send_shutdown_arrival_on_exit", false);
+  declare_parameter<int>("shutdown_arrival_repeat_count", 1);
+  declare_parameter<int>("timeout_stop_repeat_count", 3);
+  declare_parameter<int>("timeout_stop_interval_ms", 20);
   declare_parameter<std::string>("read_line_delimiter", "\\n");
 }
 
@@ -203,6 +170,9 @@ void NavTelemetrySerialNode::loadParameters()
   reconnect_period_ms_ = get_parameter("reconnect_period_ms").as_int();
   write_newline_ = get_parameter("write_newline").as_bool();
   send_shutdown_arrival_on_exit_ = get_parameter("send_shutdown_arrival_on_exit").as_bool();
+  shutdown_arrival_repeat_count_ = get_parameter("shutdown_arrival_repeat_count").as_int();
+  timeout_stop_repeat_count_ = get_parameter("timeout_stop_repeat_count").as_int();
+  timeout_stop_interval_ms_ = get_parameter("timeout_stop_interval_ms").as_int();
   serial_config_.line_delimiter = decodeDelimiter(get_parameter("read_line_delimiter").as_string());
 
   if (ack_timeout_ms_ <= 0) {
@@ -212,6 +182,27 @@ void NavTelemetrySerialNode::loadParameters()
   if (reconnect_period_ms_ <= 0) {
     RCLCPP_WARN(get_logger(), "Invalid reconnect_period_ms=%d, fallback to 1000", reconnect_period_ms_);
     reconnect_period_ms_ = 1000;
+  }
+  if (shutdown_arrival_repeat_count_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid shutdown_arrival_repeat_count=%d, fallback to 1",
+      shutdown_arrival_repeat_count_);
+    shutdown_arrival_repeat_count_ = 1;
+  }
+  if (timeout_stop_repeat_count_ <= 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid timeout_stop_repeat_count=%d, fallback to 3",
+      timeout_stop_repeat_count_);
+    timeout_stop_repeat_count_ = 3;
+  }
+  if (timeout_stop_interval_ms_ < 0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid timeout_stop_interval_ms=%d, fallback to 20",
+      timeout_stop_interval_ms_);
+    timeout_stop_interval_ms_ = 20;
   }
 }
 
@@ -418,6 +409,13 @@ void NavTelemetrySerialNode::executeGoal(const std::shared_ptr<GoalHandle> goal_
   std::string detail;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ack_timeout_ms_);
   const bool arrived = waitForArrival(deadline, detail);
+  if (!arrived && detail == "arrival_timeout") {
+    const bool stop_sent = sendCurrentPoseStopFrames(
+      "timeout_stop",
+      "nav_timeout_stop",
+      timeout_stop_repeat_count_);
+    detail += stop_sent ? ";stop_sent=1" : ";stop_sent=0";
+  }
   releaseGoalSlot();
 
   auto result = std::make_shared<NavigateWaypoint::Result>();
@@ -460,15 +458,12 @@ std::string NavTelemetrySerialNode::buildFrame(
   const PoseCache & goal,
   const std::string & event)
 {
-  ++sequence_;
+  (void)stamp;
+  (void)event;
 
   std::ostringstream stream;
   stream << std::fixed << std::setprecision(3);
-  stream << "RCNAV;seq=" << sequence_
-         << ";stamp_ms=" << (stamp.nanoseconds() / 1000000);
-  if (!event.empty()) {
-    stream << ";event=" << event;
-  }
+  stream << "RCNAV";
   appendPoseFields(stream, "cur", current);
   appendPoseFields(stream, "goal", goal);
   return stream.str();
@@ -479,7 +474,7 @@ std::string NavTelemetrySerialNode::appendConfiguredNewline(const std::string & 
   if (!write_newline_) {
     return frame;
   }
-  return frame + '\n';
+  return frame + "\r\n";
 }
 
 bool NavTelemetrySerialNode::reserveGoalSlot()
@@ -505,12 +500,20 @@ void NavTelemetrySerialNode::SendShutdownArrivalFrame()
   }
   shutdown_arrival_sent_ = true;
 
+  sendCurrentPoseStopFrames("shutdown_arrived", "nav_shutdown_arrival", shutdown_arrival_repeat_count_);
+}
+
+bool NavTelemetrySerialNode::sendCurrentPoseStopFrames(
+  const std::string & event,
+  const char * log_prefix,
+  const int repeat_count)
+{
   std::shared_ptr<SerialConnection> serial;
   {
     std::lock_guard<std::mutex> lock(serial_mutex_);
     if (!serial_ready_ || !serial_connection_) {
-      RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip serial_not_ready");
-      return;
+      RCLCPP_INFO(get_logger(), "%s_skip serial_not_ready", log_prefix);
+      return false;
     }
     serial = serial_connection_;
   }
@@ -522,31 +525,55 @@ void NavTelemetrySerialNode::SendShutdownArrivalFrame()
   }
 
   if (!current.valid) {
-    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_skip no_current_pose");
-    return;
+    RCLCPP_INFO(get_logger(), "%s_skip no_current_pose", log_prefix);
+    return false;
   }
 
-  const auto frame = appendConfiguredNewline(buildFrame(now(), current, current, "shutdown_arrived"));
-  std::string error;
-  RCLCPP_INFO(
-    get_logger(),
-    "nav_shutdown_arrival_tx port=%s data=%s",
-    serial_config_.port.c_str(),
-    escapeSerialPayload(frame).c_str());
-  if (!serial->write(frame, error)) {
-    RCLCPP_WARN(
+  bool any_sent = false;
+  for (int attempt = 1; attempt <= repeat_count; ++attempt) {
+    const auto frame = appendConfiguredNewline(buildFrame(now(), current, current, event));
+    std::string error;
+    RCLCPP_INFO(
       get_logger(),
-      "nav_shutdown_arrival_tx_failed detail=%s",
-      error.empty() ? "write_error" : error.c_str());
-  } else {
-    RCLCPP_INFO(get_logger(), "nav_shutdown_arrival_tx_done");
+      "%s_tx port=%s attempt=%d/%d data=%s",
+      log_prefix,
+      serial_config_.port.c_str(),
+      attempt,
+      repeat_count,
+      escapeSerialPayload(frame).c_str());
+    if (!serial->write(frame, error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "%s_tx_failed attempt=%d/%d detail=%s",
+        log_prefix,
+        attempt,
+        repeat_count,
+        error.empty() ? "write_error" : error.c_str());
+    } else {
+      any_sent = true;
+      RCLCPP_INFO(
+        get_logger(),
+        "%s_tx_done attempt=%d/%d",
+        log_prefix,
+        attempt,
+        repeat_count);
+    }
+
+    if (timeout_stop_interval_ms_ > 0 && attempt < repeat_count) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(timeout_stop_interval_ms_));
+    }
   }
+
+  return any_sent;
 }
 
 bool NavTelemetrySerialNode::waitForArrival(
   const std::chrono::steady_clock::time_point & deadline,
   std::string & detail)
 {
+  std::string receive_buffer;
+  std::string last_observed;
+  size_t debug_frame_count = 0U;
   while (std::chrono::steady_clock::now() < deadline) {
     std::shared_ptr<SerialConnection> serial_connection;
     {
@@ -561,22 +588,28 @@ bool NavTelemetrySerialNode::waitForArrival(
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
       deadline - std::chrono::steady_clock::now());
     const auto read_timeout = std::min(std::chrono::milliseconds(100), remaining);
-    const auto read_result = serial_connection->readLine(read_timeout);
+    const auto read_result = serial_connection->readBytes(read_timeout);
     if (read_result.status == SerialConnection::ReadStatus::kTimeout) {
       continue;
     }
-    if (read_result.status == SerialConnection::ReadStatus::kLine) {
-      const auto line = trimLine(read_result.line);
+    if (read_result.status == SerialConnection::ReadStatus::kLine && !read_result.data.empty()) {
+      receive_buffer += read_result.data;
+      last_observed = read_result.data;
+      debug_frame_count += eraseCompleteDebugFrames(receive_buffer);
       RCLCPP_INFO(
         get_logger(),
-        "nav_telemetry_serial_rx port=%s data=%s",
+        "nav_telemetry_serial_rx port=%s bytes=%zu data=%s",
         serial_config_.port.c_str(),
-        escapeSerialPayload(line).c_str());
-      if (line == kArrivalReply) {
+        read_result.data.size(),
+        escapeSerialPayload(read_result.data).c_str());
+      if (containsArrivalReply(receive_buffer)) {
+        serial_connection->clearReadBuffer();
         detail = "arrival_ok";
         return true;
       }
-      RCLCPP_WARN(get_logger(), "nav_serial_line_unmatched line=%s", line.c_str());
+      if (receive_buffer.size() > 512U) {
+        receive_buffer.erase(0, receive_buffer.size() - 64U);
+      }
       continue;
     }
 
@@ -586,6 +619,15 @@ bool NavTelemetrySerialNode::waitForArrival(
   }
 
   detail = "arrival_timeout";
+  if (!last_observed.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "nav_arrival_timeout debug_frames=%zu last_observed=%s",
+      debug_frame_count,
+      escapeSerialPayload(last_observed).c_str());
+  } else {
+    RCLCPP_WARN(get_logger(), "nav_arrival_timeout debug_frames=%zu no_serial_reply", debug_frame_count);
+  }
   return false;
 }
 

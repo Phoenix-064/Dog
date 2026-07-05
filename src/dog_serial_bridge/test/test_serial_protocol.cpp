@@ -62,4 +62,25 @@ TEST(SerialProtocolTest, ClassifiesReplies)
   EXPECT_EQ(dog_serial_bridge::classifyReply("RCOther"), ReplyType::kUnknown);
 }
 
+TEST(SerialProtocolTest, DetectsArrivalReplyInRawBytes)
+{
+  std::string bytes("\x00\x00\x80\x7F", 4);
+  bytes += "RCArrivalMX";
+  bytes.append("\x01\x02", 2);
+  EXPECT_TRUE(dog_serial_bridge::containsArrivalReply(bytes));
+  EXPECT_FALSE(dog_serial_bridge::containsArrivalReply("RCArrival"));
+}
+
+TEST(SerialProtocolTest, ErasesCompleteDebugFrames)
+{
+  std::string frame(32, '\0');
+  frame.append("\x00\x00\x80\x7F", 4);
+  std::string bytes = "prefix";
+  bytes += frame;
+  bytes += "RCArrivalMX";
+
+  EXPECT_EQ(dog_serial_bridge::eraseCompleteDebugFrames(bytes), 1U);
+  EXPECT_EQ(bytes, "prefixRCArrivalMX");
+}
+
 }  // namespace
